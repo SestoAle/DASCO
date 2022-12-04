@@ -1,12 +1,12 @@
-from torch.distributions import Categorical, Beta, Normal
-import os
+import copy
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch import distributions as pyd
 import math
-
+from utils import *
+from torch.distributions import Categorical, Beta, Normal
+import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.pi = (torch.acos(torch.zeros(1)) * 2).to(device)
@@ -67,51 +67,6 @@ class Critic(nn.Module):
         q1 = F.relu(self.embedding_q1_l2(q1))
         q1 = self.q1_l(q1)
         return q1
-
-class TanhTransform(pyd.transforms.Transform):
-    domain = pyd.constraints.real
-    codomain = pyd.constraints.interval(-1.0, 1.0)
-    bijective = True
-    sign = +1
-
-    def __init__(self, cache_size=1):
-        super().__init__(cache_size=cache_size)
-
-    @staticmethod
-    def atanh(x):
-        return 0.5 * (x.log1p() - (-x).log1p())
-
-    def __eq__(self, other):
-        return isinstance(other, TanhTransform)
-
-    def _call(self, x):
-        return x.tanh()
-
-    def _inverse(self, y):
-        # We do not clamp to the boundary here as it may degrade the performance of certain algorithms.
-        # one should use `cache_size=1` instead
-        return self.atanh(y)
-
-    def log_abs_det_jacobian(self, x, y):
-        # We use a formula that is more numerically stable, see details in the following link
-        # https://github.com/tensorflow/probability/commit/ef6bb176e0ebd1cf6e25c6b5cecdd2428c22963f#diff-e120f70e92e6741bca649f04fcd907b7
-        return 2. * (math.log(2.) - x - F.softplus(-2. * x))
-
-class SquashedNormal(pyd.transformed_distribution.TransformedDistribution):
-    def __init__(self, loc, scale):
-        self.loc = loc
-        self.scale = scale
-
-        self.base_dist = pyd.Normal(loc, scale)
-        transforms = [TanhTransform()]
-        super().__init__(self.base_dist, transforms)
-
-    @property
-    def mean(self):
-        mu = self.loc
-        for tr in self.transforms:
-            mu = tr(mu)
-        return mu
 
 # Actor-Critic PPO. The Actor is independent by the Critic.
 class SACAgent(nn.Module):
@@ -178,39 +133,23 @@ class SACAgent(nn.Module):
 
     def forward(self, state):
 
-        # action_scale = (self.action_max_value - self.action_min_value) / 2.
-        # action_bias = (self.action_max_value + self.action_min_value) / 2.
-        #
+        action_scale = (self.action_max_value - self.action_min_value) / 2.
+        action_bias = (self.action_max_value + self.action_min_value) / 2.
+
         probs = self.policy(state)
         mean = probs[:, :self.action_size]
         log_std = probs[:, self.action_size:]
-        # log_std = torch.clamp(log_std, min=LOG_SIG_MIN, max=LOG_SIG_MAX)
-        # std = log_std.exp()
-        # normal = Normal(mean, std)
-        # x_t = normal.rsample()  # for reparameterization trick (mean + std * N(0,1))
-        # y_t = torch.tanh(x_t)
-        # action = y_t * action_scale + action_bias
-        # log_prob = normal.log_prob(x_t)
-        # # Enforcing Action Bound
-        # log_prob -= torch.log(action_scale * (1 - y_t.pow(2)) + EPS)
-        # log_prob = log_prob.sum(1, keepdim=True)
-        # mean = torch.tanh(mean) * action_scale + action_bias
-
-        mu = mean
-
-        # constrain log_std inside [log_std_min, log_std_max]
-        log_std = torch.tanh(log_std)
-        log_std_min, log_std_max = LOG_SIG_MIN, LOG_SIG_MAX
-        log_std = log_std_min + 0.5 * (log_std_max - log_std_min) * (log_std + 1)
-
+        log_std = torch.clamp(log_std, min=LOG_SIG_MIN, max=LOG_SIG_MAX)
         std = log_std.exp()
-
-        # self.outputs['mu'] = mu
-        # self.outputs['std'] = std
-
-        dist = SquashedNormal(mu, std)
-        action = dist.sample()
-        log_prob = dist.log_prob(action).sum(-1, keepdim=True)
+        normal = Normal(mean, std)
+        x_t = normal.rsample()  # for reparameterization trick (mean + std * N(0,1))
+        y_t = torch.tanh(x_t)
+        action = y_t * action_scale + action_bias
+        log_prob = normal.log_prob(x_t)
+        # Enforcing Action Bound
+        log_prob -= torch.log(action_scale * (1 - y_t.pow(2)) + EPS)
+        log_prob = log_prob.sum(1, keepdim=True)
+        mean = torch.tanh(mean) * action_scale + action_bias
         return action, log_prob, probs, None
 
     # def forward(self, inputs, deterministic=False):
