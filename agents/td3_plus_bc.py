@@ -22,7 +22,7 @@ class Policy(nn.Module):
         self.embedding_l2 = nn.Linear(256, 256)
         self.action_l = nn.Linear(256, self.action_size)
 
-    def forward(self, inputs):
+    def forward(self, inputs, deterministic=False):
         state = torch.reshape(inputs, (-1, self.state_dim))
         x = F.relu(self.embedding_l1(state))
         x = F.relu(self.embedding_l2(x))
@@ -89,10 +89,10 @@ class TD3BCAgent(nn.Module):
         # Define the entities that we need, policy and actor
         self.policy = Policy(self.state_dim, self.action_size, self.max_action, self.min_action_value).to(device)
         self.policy_loss = torch.nn.MSELoss()
-        self.policy_optimizer = torch.optim.Adam(self.policy.parameters(), lr=3e-5)
+        self.policy_optimizer = torch.optim.Adam(self.policy.parameters(), lr=3e-4)
         self.critic = Critic(self.state_dim, self.action_size).to(device)
         self.critic_loss = torch.nn.MSELoss()
-        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=3e-6)
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=3e-4)
 
         # Define the targets and init them
         self.policy_target = Policy(self.state_dim, self.action_size, self.max_action, self.min_action_value).to(device)
@@ -161,6 +161,8 @@ class TD3BCAgent(nn.Module):
             # Optimize the critic
             self.critic_optimizer.zero_grad()
             critic_loss.backward()
+            # Gradient Clipping
+            torch.nn.utils.clip_grad_norm_(self.critic.parameters(), 1.0)
             self.critic_optimizer.step()
 
             c_losses.append(critic_loss.detach().cpu())
@@ -177,6 +179,7 @@ class TD3BCAgent(nn.Module):
 
                 self.policy_optimizer.zero_grad()
                 p_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 1.0)
                 self.policy_optimizer.step()
 
                 p_losses.append(p_loss.detach().cpu())

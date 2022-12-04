@@ -54,7 +54,7 @@ def eval(model, max_test_ep_len, env, state_mean=None, state_std=None):
                 running_state = (np.asarray(running_state).reshape(1, -1) - state_mean) / (state_std)
 
             running_state = torch.from_numpy(running_state).float().to(device)
-            action = model.policy(running_state)
+            action, _, _, _ = model.policy(running_state, deterministic=False)
             action = action.detach().cpu().numpy()[0]
             running_state, done, running_reward = env.execute(action, visualize)
             running_state = running_state['global_in']
@@ -79,7 +79,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-mn', '--model-name', help="The name of the model", default='dasco')
 parser.add_argument('-gn', '--game-name', help="The name of the game", default="hopper-expert-v2")
 parser.add_argument('-rn', '--run-name', help="The name of the run to save statistics", default="run")
-parser.add_argument('-al', '--algorithm', help="The algorithm to use", default="dasco")
+parser.add_argument('-al', '--algorithm', help="The algorithm to use", default="td3")
 parser.add_argument('-mt', '--max-timesteps', help="Max timestep per episode", default=1000, type=int)
 parser.add_argument('-e', '--epochs', help="Number of epochs", default=200, type=int)
 
@@ -143,4 +143,4 @@ if __name__ == "__main__":
         c_losses.append(np.mean(current_q_losses))
         rewards.append(reward)
         d4rl_rewards.append(d4rl_reward)
-        save_statistics(args.run_name, p_losses, c_losses, rewards, d4rl_rewards, "irl_results")
+        save_statistics(args.run_name, p_losses, c_losses, rewards, d4rl_rewards, "results")
