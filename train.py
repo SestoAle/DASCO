@@ -15,9 +15,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Parse arguments for training
 parser = argparse.ArgumentParser()
 parser.add_argument('-mn', '--model-name', help="The name of the policy", default='sac')
-parser.add_argument('-gn', '--game-name', help="The name of the game", default="HalfCheetah")
+parser.add_argument('-gn', '--game-name', help="The name of the game", default="Hopper")
 parser.add_argument('-sf', '--save-frequency', help="How mane episodes after save the model", default=1000)
-parser.add_argument('-lg', '--logging', help="How many episodes after logging statistics", default=100)
+parser.add_argument('-lg', '--logging', help="How many episodes after logging statistics", default=1)
 parser.add_argument('-mt', '--max-timesteps', help="Max timestep per episode", default=1000)
 parser.add_argument('-pl', '--parallel', help="How many environments to simulate in parallel. Default is 1", type=int, default=1)
 
@@ -91,14 +91,14 @@ if __name__ == "__main__":
     # Create agent
     # The policy embedding and the critic embedding for the PPO agent are defined in the architecture file
     # You can change those architectures, the PPOAgent will manage the action layers and the value layers
-    agent = SACAgent(critic_embedding=CriticEmbedding, policy_embedding=PolicyEmbedding, state_dim=8, lr=3e-5,
-                     action_size=16+1, num_itr=1, batch_size=256, frequency_mode=frequency_mode, name=model_name,
+    agent = SACAgent(critic_embedding=CriticEmbedding, policy_embedding=PolicyEmbedding, state_dim=state_dim, lr=3e-5,
+                     action_size=action_size, num_itr=1, batch_size=256, frequency_mode=frequency_mode, name=model_name,
                      memory=memory, alpha=0.05)
 
     # Create runner
     # This class manages the evaluation of the policy and the collection of experience in a parallel setting
     # (not vectorized)
-    runner = SRunner(agent=agent, frequency=frequency, env=env, save_frequency=save_frequency,
+    runner = SRunner(agent=agent, frequency=frequency, env=env, save_frequency=save_frequency, random_actions=random_actions,
                     logging=logging, total_episode=total_episode, curriculum=curriculum, demonstrations_name="dems",
                     frequency_mode=frequency_mode, curriculum_mode='episodes', callback_function=callback)
 

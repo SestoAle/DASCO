@@ -223,7 +223,7 @@ class Runner:
                 local_entropies.append(self.env.entropy(probs[0]))
 
                 # Execute in the environment
-                state_n, reward, done = self.env.step(action)
+                state_n, reward, done = self.env.execute(action)
                 if save:
                     traj['states'].append(state)
                     traj['rewards'].append(reward)
