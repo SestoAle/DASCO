@@ -163,7 +163,7 @@ class SACAgent(nn.Module):
             log_prob = dist.log_prob(action)
             # If there are more than 1 continuous actions, do the mean of log_probs
             if self.action_size > 1:
-                log_prob = torch.sum(log_prob, dim=1)
+                log_prob = torch.sum(log_prob, dim=1, keepdim=True)
             # Standardize the action between min value and max value
             action = self.action_min_value + (
                     self.action_max_value - self.action_min_value) * action
