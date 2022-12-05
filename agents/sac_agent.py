@@ -131,8 +131,7 @@ class SACAgent(nn.Module):
 
         self.total_itr = 0
 
-    def forward(self, state, distribution="beta"):
-
+    def forward(self, state, distribution="gaussian"):
 
         action_scale = (self.action_max_value - self.action_min_value) / 2.
         action_bias = (self.action_max_value + self.action_min_value) / 2.
