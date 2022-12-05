@@ -91,9 +91,9 @@ if __name__ == "__main__":
     # Create agent
     # The policy embedding and the critic embedding for the PPO agent are defined in the architecture file
     # You can change those architectures, the PPOAgent will manage the action layers and the value layers
-    agent = SACAgent(critic_embedding=CriticEmbedding, policy_embedding=PolicyEmbedding, state_dim=state_dim, lr=3e-5,
+    agent = SACAgent(critic_embedding=CriticEmbedding, policy_embedding=PolicyEmbedding, state_dim=state_dim, lr=1e-4,
                      action_size=action_size, num_itr=1, batch_size=256, frequency_mode=frequency_mode, name=model_name,
-                     memory=memory, alpha=0.05)
+                     memory=memory, alpha=0.2)
 
     # Create runner
     # This class manages the evaluation of the policy and the collection of experience in a parallel setting

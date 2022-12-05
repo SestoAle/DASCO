@@ -131,25 +131,43 @@ class SACAgent(nn.Module):
 
         self.total_itr = 0
 
-    def forward(self, state):
+    def forward(self, state, distribution="beta"):
+
 
         action_scale = (self.action_max_value - self.action_min_value) / 2.
         action_bias = (self.action_max_value + self.action_min_value) / 2.
-
         probs = self.policy(state)
-        mean = probs[:, :self.action_size]
-        log_std = probs[:, self.action_size:]
-        log_std = torch.clamp(log_std, min=LOG_SIG_MIN, max=LOG_SIG_MAX)
-        std = log_std.exp()
-        normal = Normal(mean, std)
-        x_t = normal.rsample()  # for reparameterization trick (mean + std * N(0,1))
-        y_t = torch.tanh(x_t)
-        action = y_t * action_scale + action_bias
-        log_prob = normal.log_prob(x_t)
-        # Enforcing Action Bound
-        log_prob -= torch.log(action_scale * (1 - y_t.pow(2)) + EPS)
-        log_prob = log_prob.sum(1, keepdim=True)
-        mean = torch.tanh(mean) * action_scale + action_bias
+
+        if distribution == "gaussian":
+            mean = probs[:, :self.action_size]
+            log_std = probs[:, self.action_size:]
+            log_std = torch.clamp(log_std, min=LOG_SIG_MIN, max=LOG_SIG_MAX)
+            std = log_std.exp()
+            normal = Normal(mean, std)
+            x_t = normal.rsample()  # for reparameterization trick (mean + std * N(0,1))
+            y_t = torch.tanh(x_t)
+            action = y_t * action_scale + action_bias
+            log_prob = normal.log_prob(x_t)
+            # Enforcing Action Bound
+            log_prob -= torch.log(action_scale * (1 - y_t.pow(2)) + EPS)
+            log_prob = log_prob.sum(1, keepdim=True)
+            mean = torch.tanh(mean) * action_scale + action_bias
+        elif distribution == 'beta':
+            alpha = probs[:, :self.action_size]
+            beta = probs[:, self.action_size:]
+            alpha = F.softplus(alpha) + 1
+            beta = F.softplus(beta) + 1
+            dist = Beta(alpha, beta)
+            # Sample an action from beta distribution
+            action = dist.sample()
+            log_prob = dist.log_prob(action)
+            # If there are more than 1 continuous actions, do the mean of log_probs
+            if self.action_size > 1:
+                log_prob = torch.sum(log_prob, dim=1)
+            # Standardize the action between min value and max value
+            action = self.action_min_value + (
+                    self.action_max_value - self.action_min_value) * action
+
         return action, log_prob, probs, None
 
     # def forward(self, inputs, deterministic=False):
