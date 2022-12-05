@@ -77,7 +77,8 @@ class Runner:
             "mean_entropies": [],
             "std_entropies": [],
             "reward_model_loss": [],
-            "env_rewards": []
+            "env_rewards": [],
+            "p_losses": []
         }
 
         # Initialize reward model
@@ -283,7 +284,8 @@ class Runner:
                         self.total_step > 0 and self.total_step % self.frequency == 0:
                     if self.random_actions is not None:
                         if self.total_step > self.random_actions:
-                            self.agent.update()
+                            p_loss = self.agent.update()
+                            self.history['p_losses'].append(p_loss)
                     else:
 
                         if self.motivation is not None:
@@ -345,6 +347,9 @@ class Runner:
             if self.ep > 0 and self.ep % self.logging == 0:
                 print('Mean of {} episode reward after {} episodes: {}'.
                       format(self.logging, self.ep, np.mean(self.history['episode_rewards'][-self.logging:])))
+
+                print('Policy Loss: {}'.
+                      format(np.mean(self.history['p_losses'][-self.logging:])))
 
                 if self.reward_model is not None:
                     print('Mean of {} environment episode reward after {} episodes: {}'.

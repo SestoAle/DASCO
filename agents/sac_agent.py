@@ -307,7 +307,7 @@ class SACAgent(nn.Module):
                 self.copy_target(self.critic_target, self.critic, self.tau, False)
                 self.copy_target(self.policy_target, self.policy, self.tau, False)
 
-        return p_losses, c_losses
+        return np.mean(p_losses)
 
     def compute_target(self, states_n, rews, dones):
 
