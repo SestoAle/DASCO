@@ -5,6 +5,7 @@ import colorama, textwrap
 import random
 from copy import deepcopy
 import pickle
+import d4rl
 
 colorama.init(convert=True)
 
@@ -326,3 +327,32 @@ class DTDemDataset:
             traj_mask.append(i_tmask)
 
         return timesteps, states, actions, returns_to_go, traj_mask
+
+def load_demonstrations_d4rl(env, normalize=False):
+    dataset = d4rl.qlearning_dataset(env.env)
+
+    states_mean = None
+    states_std = None
+    if normalize:
+        states_mean = np.mean(dataset['observations'], axis=0)
+        states_std = np.std(dataset['observations'], axis=0) + 1e-3
+
+    dems = dict(states=[], actions=[], rewards=[], next_states=[], dones=[])
+
+    for s in dataset['observations']:
+        if normalize:
+            s = (s - states_mean) / (states_std)
+
+        dems['states'].append(s)
+    dems['actions'] = dataset['actions']
+    for s in dataset['next_observations']:
+        if normalize:
+            s = (s - states_mean) / (states_std)
+
+        dems['next_states'].append(s)
+    dems['rewards'] = dataset['rewards'].reshape(-1, 1)
+    dems['dones'] = dataset['terminals'].reshape(-1, 1)
+
+    print("There are {} transitions in this demonstrations".format(len(dems['states'])))
+    # input("Press any key to continue... ")
+    return dems, states_mean, states_std

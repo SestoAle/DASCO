@@ -73,9 +73,8 @@ class Policy(nn.Module):
         # Layers specification
         self.embedding_l1 = nn.Linear(state_dim, 256)
         self.embedding_l2 = nn.Linear(256, 256)
-        self.embedding_l3 = nn.Linear(256, 256)
-        self.embedding_l4 = nn.Linear(256, 256)
-
+        # self.embedding_l3 = nn.Linear(256, 256)
+        # self.embedding_l4 = nn.Linear(256, 256)
 
         self.mean = nn.Linear(256, self.action_size)
         self.log_std = nn.Linear(256, self.action_size)
@@ -84,8 +83,8 @@ class Policy(nn.Module):
         state = torch.reshape(inputs, (-1, self.state_dim))
         x = F.relu(self.embedding_l1(state))
         x = F.relu(self.embedding_l2(x))
-        x = F.relu(self.embedding_l3(x))
-        x = F.relu(self.embedding_l4(x))
+        # x = F.relu(self.embedding_l3(x))
+        # x = F.relu(self.embedding_l4(x))
         mean = self.mean(x)
         log_std = self.log_std(x)
         action_scale = (self.max_action_value - self.min_action_value) / 2.
@@ -94,21 +93,17 @@ class Policy(nn.Module):
         if deterministic:
             return torch.tanh(mean) * action_scale + action_bias
         else:
-            mu = mean
-
-            # constrain log_std inside [log_std_min, log_std_max]
-            log_std = torch.tanh(log_std)
-            log_std_min, log_std_max = LOG_SIG_MIN, LOG_SIG_MAX
-            log_std = log_std_min + 0.5 * (log_std_max - log_std_min) * (log_std + 1)
-
+            log_std = torch.clamp(log_std, min=LOG_SIG_MIN, max=LOG_SIG_MAX)
             std = log_std.exp()
-
-            # self.outputs['mu'] = mu
-            # self.outputs['std'] = std
-
-            dist = SquashedNormal(mu, std)
-            action = dist.sample()
-            log_prob = dist.log_prob(action).sum(-1, keepdim=True)
+            normal = Normal(mean, std)
+            x_t = normal.rsample()  # for reparameterization trick (mean + std * N(0,1))
+            y_t = torch.tanh(x_t)
+            action = y_t * action_scale + action_bias
+            log_prob = normal.log_prob(x_t)
+            # Enforcing Action Bound
+            log_prob -= torch.log(action_scale * (1 - y_t.pow(2)) + EPS)
+            log_prob = log_prob.sum(1, keepdim=True)
+            mean = torch.tanh(mean) * action_scale + action_bias
             return action, log_prob, None, None
 
 class Critic(nn.Module):
@@ -118,24 +113,24 @@ class Critic(nn.Module):
         # Layers specification
         self.embedding_q1_l1 = nn.Linear(state_dim + action_dim, 256)
         self.embedding_q1_l2 = nn.Linear(256, 256)
-        self.embedding_q1_l3 = nn.Linear(256, 256)
+        # self.embedding_q1_l3 = nn.Linear(256, 256)
         self.q1_l = nn.Linear(256, 1)
 
         self.embedding_q2_l1 = nn.Linear(state_dim + action_dim, 256)
         self.embedding_q2_l2 = nn.Linear(256, 256)
-        self.embedding_q2_l3 = nn.Linear(256, 256)
+        # self.embedding_q2_l3 = nn.Linear(256, 256)
         self.q2_l = nn.Linear(256, 1)
 
     def forward(self, state, action):
         x = torch.cat([state, action], dim=1)
         q1 = F.relu(self.embedding_q1_l1(x))
         q1 = F.relu(self.embedding_q1_l2(q1))
-        q1 = F.relu(self.embedding_q1_l3(q1))
+        # q1 = F.relu(self.embedding_q1_l3(q1))
         q1 = self.q1_l(q1)
 
         q2 = F.relu(self.embedding_q2_l1(x))
         q2 = F.relu(self.embedding_q2_l2(q2))
-        q2 = F.relu(self.embedding_q2_l3(q2))
+        # q2 = F.relu(self.embedding_q2_l3(q2))
         q2 = self.q2_l(q2)
         return q1, q2
 
@@ -143,7 +138,7 @@ class Critic(nn.Module):
         x = torch.cat([state, action], dim=1)
         q1 = F.relu(self.embedding_q1_l1(x))
         q1 = F.relu(self.embedding_q1_l2(q1))
-        q1 = F.relu(self.embedding_q1_l3(q1))
+        # q1 = F.relu(self.embedding_q1_l3(q1))
         q1 = self.q1_l(q1)
         return q1
 
@@ -169,22 +164,25 @@ class Generator(nn.Module):
         self.max_action_value = max_action_value
         self.state_dim = state_dim
         self.random_noise = state_dim
+        self.latent_space = 750
 
         # Layers specification
-        self.embedding_l1 = nn.Linear(state_dim + 3, 750)
-        self.gen_l = nn.Linear(750, action_dim)
+        self.embedding_l1 = nn.Linear(state_dim, self.latent_space)
+        self.gen_l = nn.Linear(750 * 2, action_dim)
 
     def forward(self, state):
         x = torch.reshape(state, (-1, self.state_dim))
-        noise = torch.rand((x.shape[0], 3)).to(device)
-        x = torch.cat([x, noise], dim=1)
+
+        # x = torch.cat([x, noise], dim=1)
         gen = F.relu(self.embedding_l1(x))
-        gen = F.tanh(self.gen_l(gen)) * self.max_action_value
-        return gen
+        noise = torch.rand((x.shape[0], self.latent_space)).to(device)
+        gen = torch.cat([gen, noise], dim=1)
+        action = F.tanh(self.gen_l(gen)) * self.max_action_value
+        return action
 
 
 class DASCOAgent(nn.Module):
-    def __init__(self, state_dim, discount=0.99, lr=0.001, tau=0.005, w=1., alpha=1, policy_freq=2,
+    def __init__(self, state_dim, discount=0.99, lr=0.001, tau=0.005, w=1., alpha=0.2, policy_freq=2,
                  batch_size=32, num_itr=20, name='dasco', action_size=4, max_action_value=1, min_action_value=-1,
                  **kwargs):
         super(DASCOAgent, self).__init__()
@@ -249,9 +247,13 @@ class DASCOAgent(nn.Module):
 
     def get_instance_noise(self, actions, std=0.3):
         noise = torch.normal(mean=0, std=torch.ones_like(actions) * std).to(device)
-        return actions
 
-    def train(self):
+        if torch.norm(noise) > std:
+            noise = (noise / torch.norm(noise)) * std
+
+        return noise
+
+    def update(self):
         c_losses = []
         p_losses = []
         d_losses = []
@@ -266,7 +268,9 @@ class DASCOAgent(nn.Module):
             next_states_mb = self.next_states[mini_batch_idxs]
             actions_mb = self.actions[mini_batch_idxs]
             rewards_mb = self.rewards[mini_batch_idxs]
+            rewards_mb = rewards_mb.view(-1, 1)
             dones_mb = self.dones[mini_batch_idxs]
+            dones_mb = dones_mb.view(-1, 1)
 
             with torch.no_grad():
                 target_Q = self.compute_target(next_states_mb, rewards_mb, dones_mb)
@@ -291,7 +295,15 @@ class DASCOAgent(nn.Module):
                 action, logprob, probs, dist = self.policy(states_mb)
                 current_Q1, current_Q2 = self.critic(states_mb, action)
                 q = torch.min(current_Q1, current_Q2)
-                p_loss = ((self.alpha * logprob) - q).mean()
+
+                action_d, logit_d = self.discriminator(states_mb, action)
+                log_action_d = F.logsigmoid(logit_d)
+                probs = action_d
+                real_actions_probs, real_actions_logit = self.discriminator(states_mb, actions_mb)
+                probs = torch.min(real_actions_probs, probs)
+                probs = probs / real_actions_probs
+                probs.detach()
+                p_loss = -(probs * q + log_action_d).mean()
 
                 self.policy_optimizer.zero_grad()
                 p_loss.backward()
@@ -312,49 +324,46 @@ class DASCOAgent(nn.Module):
                 self.copy_target(self.critic_target, self.critic, self.tau, False)
                 self.copy_target(self.policy_target, self.policy, self.tau, False)
 
-            # # Optimize generator
-            # real_label = torch.full((self.batch_size,), 1).to(device).float()
-            # action_fake = self.generator(states_mb)
-            # action_pi = self.policy(states_mb)
-            #
-            # _, logit = self.discriminator(states_mb, action_fake)
-            # g_loss = F.binary_cross_entropy_with_logits(logit, real_label)
-            # _, logit = self.discriminator(states_mb, action_pi)
-            # g_loss += F.binary_cross_entropy_with_logits(logit, real_label)
-            # g_loss /= 2
-            # self.generator_optimizer.zero_grad()
-            # g_loss.backward()
-            # self.generator_optimizer.step()
-            # g_losses.append(g_loss.detach().cpu())
-            #
-            # # Optimize discriminator
-            # # We update the discriminator more time than the generator
-            # for ge in range(5):
-            #     # Take a mini-batch of batch_size experience
-            #     mini_batch_idxs = np.random.randint(0, len(self.states), size=self.batch_size)
-            #
-            #     states_mb = self.states[mini_batch_idxs]
-            #     actions_mb = self.actions[mini_batch_idxs]
-            #
-            #     # Loss on real action
-            #     # TODO: Noise
-            #     _, d_real_logit = self.discriminator(states_mb, actions_mb + self.get_instance_noise(actions_mb))
-            #     real_label = torch.full((self.batch_size,), 1).to(device).float()
-            #     err_d_real = F.mse_loss(F.sigmoid(d_real_logit), real_label) / 2.
-            #
-            #     def loss_fake_action(fake_action):
-            #         fake_label = torch.full((self.batch_size,), 0,).to(device).float()
-            #         _, d_fake_logit = self.discriminator(states_mb, fake_action.detach() + self.get_instance_noise(fake_action))
-            #         err_d_fake = F.mse_loss(F.sigmoid(d_fake_logit), fake_label) / 2.
-            #         return err_d_fake
-            #
-            #     fake_action_aux = self.generator(states_mb)
-            #     fake_action_pi = self.policy(states_mb)
-            #     err_d_fake = loss_fake_action(fake_action_aux) + loss_fake_action(fake_action_pi)
-            #     self.discriminator_optimizer.zero_grad()
-            #     (err_d_real + err_d_fake).backward()
-            #     self.discriminator_optimizer.step()
-            #     d_losses.append((err_d_fake + err_d_real).detach().cpu())
+            # Optimize generator
+            real_label = torch.full((self.batch_size,), 1).to(device).float()
+            action_fake = self.generator(states_mb)
+
+            _, logit = self.discriminator(states_mb, action_fake)
+            g_loss = F.binary_cross_entropy_with_logits(logit, real_label)
+
+            self.generator_optimizer.zero_grad()
+            g_loss.backward()
+            self.generator_optimizer.step()
+            g_losses.append(g_loss.detach().cpu())
+
+            # Optimize discriminator
+            # We update the discriminator more time than the generator
+            for ge in range(5):
+                # Take a mini-batch of batch_size experience
+                mini_batch_idxs = np.random.randint(0, len(self.states), size=self.batch_size)
+
+                states_mb = self.states[mini_batch_idxs]
+                actions_mb = self.actions[mini_batch_idxs]
+
+                # Loss on real action
+                # TODO: Noise
+                _, d_real_logit = self.discriminator(states_mb, actions_mb + self.get_instance_noise(actions_mb))
+                real_label = torch.full((self.batch_size,), 1).to(device).float()
+                err_d_real = F.mse_loss(F.sigmoid(d_real_logit), real_label) / 2.
+
+                def loss_fake_action(fake_action):
+                    fake_label = torch.full((self.batch_size,), 0,).to(device).float()
+                    _, d_fake_logit = self.discriminator(states_mb, fake_action.detach() + self.get_instance_noise(fake_action))
+                    err_d_fake = F.mse_loss(F.sigmoid(d_fake_logit), fake_label) / 2.
+                    return err_d_fake
+
+                fake_action_aux = self.generator(states_mb)
+                fake_action_pi, _, _, _ = self.policy(states_mb)
+                err_d_fake = loss_fake_action(fake_action_aux) + loss_fake_action(fake_action_pi)
+                self.discriminator_optimizer.zero_grad()
+                (err_d_real + err_d_fake).backward()
+                self.discriminator_optimizer.step()
+                d_losses.append((err_d_fake + err_d_real).detach().cpu())
 
         end = time.time()
         print("Time: {}".format(end - start))

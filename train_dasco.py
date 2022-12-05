@@ -9,7 +9,7 @@ from utils import *
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def load_demonstrations_d4rl(env, normalize=True):
+def load_demonstrations_d4rl(env, normalize=False):
     dataset = d4rl.qlearning_dataset(env.env)
 
     states_mean = None
@@ -56,7 +56,7 @@ def eval(model, max_test_ep_len, env, state_mean=None, state_std=None):
             running_state = torch.from_numpy(running_state).float().to(device)
             action, _, _, _ = model.policy(running_state, deterministic=False)
             action = action.detach().cpu().numpy()[0]
-            running_state, done, running_reward = env.execute(action, visualize)
+            running_state, running_reward, done = env.execute(action, visualize)
             running_state = running_state['global_in']
             total_reward += running_reward
 
@@ -79,9 +79,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-mn', '--model-name', help="The name of the model", default='dasco')
 parser.add_argument('-gn', '--game-name', help="The name of the game", default="hopper-expert-v2")
 parser.add_argument('-rn', '--run-name', help="The name of the run to save statistics", default="run")
-parser.add_argument('-al', '--algorithm', help="The algorithm to use", default="td3")
+parser.add_argument('-al', '--algorithm', help="The algorithm to use", default="dasco")
 parser.add_argument('-mt', '--max-timesteps', help="Max timestep per episode", default=1000, type=int)
-parser.add_argument('-e', '--epochs', help="Number of epochs", default=200, type=int)
+parser.add_argument('-e', '--epochs', help="Number of epochs", default=2000, type=int)
 
 args = parser.parse_args()
 
@@ -131,7 +131,7 @@ if __name__ == "__main__":
     d4rl_rewards = []
     print("Start training")
     for e in range(1, epochs+1):
-        current_p_losses, current_q_losses, current_d_losses, current_g_losses = model.train()
+        current_p_losses, current_q_losses, current_d_losses, current_g_losses = model.update()
         print("Policy loss at {} epoch: {}".format(e, np.mean(current_p_losses)))
         print("Critic loss at {} epoch: {}".format(e, np.mean(current_q_losses)))
         if current_d_losses is not None:

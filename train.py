@@ -102,58 +102,76 @@ if __name__ == "__main__":
                     logging=logging, total_episode=total_episode, curriculum=curriculum, demonstrations_name="dems",
                     frequency_mode=frequency_mode, curriculum_mode='episodes', callback_function=callback)
 
-    try:
-        runner.run()
-    finally:
-        env.close()
+    # try:
+    #     runner.run()
+    # finally:
+    #     env.close()
 
 
 "%%%%%%%%%%%%%%%%%%%%%%%%%%"
-# from utils  import *
-# env = envs[0]
-# state, done = env.reset(), False
-# episode_reward = 0
-# episode_timesteps = 0
-# random_actions = 0
-# episode_num = 0
-#
-# for t in range(int(1e100)):
-#
-#     episode_timesteps += 1
-#
-#     # Select action randomly or according to policy
-#     if t < random_actions:
-#         action = env.env.action_space.sample()
-#         logprobs = 0
-#     else:
-#         action, logprobs, probs, dist = agent(torch.from_numpy(np.asarray(state)).to(device).float())
-#         action = action.detach().cpu().numpy()[0]
-#         logprobs = logprobs.detach().cpu().numpy()
-#         probs = probs.detach().cpu().numpy()
-#
-#     # Perform action
-#     next_state, reward, done = env.step(action)
-#     if episode_timesteps == max_episode_timestep:
-#         done = True
-#     done_bool = float(done) if episode_timesteps < max_episode_timestep else 0
-#
-#     # Store data in replay buffer
-#     agent.add_to_buffer(state, next_state, action, reward, logprobs, done_bool)
-#     # replay_buffer.add(state, action, next_state, reward, done_bool)
-#
-#     state = next_state
-#     episode_reward += reward
-#
-#     # Train agent after collecting sufficient data
-#     if t >= random_actions:
-#         agent.update()
-#
-#     if done:
-#         # +1 to account for 0 indexing. +0 on ep_timesteps since it will increment +1 even if done=True
-#         print(
-#             f"Total T: {t + 1} Episode Num: {episode_num + 1} Episode T: {episode_timesteps} Reward: {episode_reward:.3f}")
-#         # Reset environment
-#         state, done = env.reset(), False
-#         episode_reward = 0
-#         episode_timesteps = 0
-#         episode_num += 1
+from utils  import *
+episode_reward = 0
+episode_timesteps = 0
+random_actions = 25e3
+episode_num = 0
+offline = True
+
+if offline:
+    env = MujocoEnvWrapper("hopper-expert-v2")
+    random_actions = 0
+    dems, _, _ = load_demonstrations_d4rl(env)
+    for i in range(len(dems['states'])):
+        state = dems['states'][i]
+        next_state = dems['next_states'][i]
+        action = dems['actions'][i]
+        reward = dems['rewards'][i][0]
+        done = dems['dones'][i][0]
+        done_bool = float(done)
+
+        agent.add_to_buffer(state, next_state, action, reward, 0, done_bool)
+    print(len(agent.buffer['states']))
+    input('...')
+
+state, done = env.reset(), False
+for t in range(int(1e100)):
+
+    episode_timesteps += 1
+
+    # Select action randomly or according to policy
+    if t < random_actions:
+        action = env.env.action_space.sample()
+        logprobs = 0
+    else:
+        action, logprobs, probs, dist = agent(torch.from_numpy(np.asarray(state)).to(device).float())
+        action = action.detach().cpu().numpy()[0]
+        logprobs = logprobs.detach().cpu().numpy()
+        probs = probs.detach().cpu().numpy()
+
+    # Perform action
+    next_state, reward, done = env.execute(action)
+    if episode_timesteps == max_episode_timestep:
+        done = True
+    done_bool = float(done) if episode_timesteps < max_episode_timestep else 0
+
+    # Store data in replay buffer
+    if not offline:
+        agent.add_to_buffer(state, next_state, action, reward, logprobs, done_bool)
+    # replay_buffer.add(state, action, next_state, reward, done_bool)
+
+    state = next_state
+    episode_reward += reward
+
+    # Train agent after collecting sufficient data
+    p_loss = 0
+    if t >= random_actions:
+        p_loss = agent.update()
+
+    if done:
+        # +1 to account for 0 indexing. +0 on ep_timesteps since it will increment +1 even if done=True
+        print(
+            f"Total T: {t + 1} Episode Num: {episode_num + 1} Episode T: {episode_timesteps} Reward: {episode_reward:.3f}, P Loss: {p_loss}")
+        # Reset environment
+        state, done = env.reset(), False
+        episode_reward = 0
+        episode_timesteps = 0
+        episode_num += 1
