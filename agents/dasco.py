@@ -73,8 +73,6 @@ class Policy(nn.Module):
         # Layers specification
         self.embedding_l1 = nn.Linear(state_dim, 256)
         self.embedding_l2 = nn.Linear(256, 256)
-        # self.embedding_l3 = nn.Linear(256, 256)
-        # self.embedding_l4 = nn.Linear(256, 256)
 
         self.mean = nn.Linear(256, self.action_size)
         self.log_std = nn.Linear(256, self.action_size)
@@ -83,8 +81,6 @@ class Policy(nn.Module):
         state = torch.reshape(inputs, (-1, self.state_dim))
         x = F.relu(self.embedding_l1(state))
         x = F.relu(self.embedding_l2(x))
-        # x = F.relu(self.embedding_l3(x))
-        # x = F.relu(self.embedding_l4(x))
         mean = self.mean(x)
         log_std = self.log_std(x)
         action_scale = (self.max_action_value - self.min_action_value) / 2.
@@ -113,24 +109,20 @@ class Critic(nn.Module):
         # Layers specification
         self.embedding_q1_l1 = nn.Linear(state_dim + action_dim, 256)
         self.embedding_q1_l2 = nn.Linear(256, 256)
-        # self.embedding_q1_l3 = nn.Linear(256, 256)
         self.q1_l = nn.Linear(256, 1)
 
         self.embedding_q2_l1 = nn.Linear(state_dim + action_dim, 256)
         self.embedding_q2_l2 = nn.Linear(256, 256)
-        # self.embedding_q2_l3 = nn.Linear(256, 256)
         self.q2_l = nn.Linear(256, 1)
 
     def forward(self, state, action):
         x = torch.cat([state, action], dim=1)
         q1 = F.relu(self.embedding_q1_l1(x))
         q1 = F.relu(self.embedding_q1_l2(q1))
-        # q1 = F.relu(self.embedding_q1_l3(q1))
         q1 = self.q1_l(q1)
 
         q2 = F.relu(self.embedding_q2_l1(x))
         q2 = F.relu(self.embedding_q2_l2(q2))
-        # q2 = F.relu(self.embedding_q2_l3(q2))
         q2 = self.q2_l(q2)
         return q1, q2
 
@@ -138,7 +130,6 @@ class Critic(nn.Module):
         x = torch.cat([state, action], dim=1)
         q1 = F.relu(self.embedding_q1_l1(x))
         q1 = F.relu(self.embedding_q1_l2(q1))
-        # q1 = F.relu(self.embedding_q1_l3(q1))
         q1 = self.q1_l(q1)
         return q1
 

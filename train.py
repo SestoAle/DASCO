@@ -117,7 +117,7 @@ episode_num = 0
 offline = True
 
 if offline:
-    env = MujocoEnvWrapper("hopper-expert-v2")
+    env = MujocoEnvWrapper("hopper-medium-expert-v2")
     random_actions = 0
     dems, _, _ = load_demonstrations_d4rl(env)
     for i in range(len(dems['states'])):

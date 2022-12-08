@@ -2,7 +2,9 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 from agents.td3_plus_bc import TD3BCAgent
 from agents.dasco import DASCOAgent
+from agents.cql_agent import CQLAgent
 import d4rl
+from architectures.lunar_arch import *
 import argparse
 from envs.mujoco_env import MujocoEnvWrapper
 from utils import *
@@ -41,6 +43,7 @@ def load_demonstrations_d4rl(env, normalize=False):
 def eval(model, max_test_ep_len, env, state_mean=None, state_std=None):
     print("Testing...")
     global visualize
+    global args
     episode_rewards = []
     for episode in range(10):
 
@@ -54,7 +57,10 @@ def eval(model, max_test_ep_len, env, state_mean=None, state_std=None):
                 running_state = (np.asarray(running_state).reshape(1, -1) - state_mean) / (state_std)
 
             running_state = torch.from_numpy(running_state).float().to(device)
-            action, _, _, _ = model.policy(running_state, deterministic=False)
+            if args.algorithm == "cql":
+                action, _, _, _ = model(running_state)
+            else:
+                action, _, _, _ = model.policy(running_state, deterministic=False)
             action = action.detach().cpu().numpy()[0]
             running_state, running_reward, done = env.execute(action, visualize)
             running_state = running_state['global_in']
@@ -76,10 +82,10 @@ def eval(model, max_test_ep_len, env, state_mean=None, state_std=None):
     return np.mean(episode_rewards), d4rl_score
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-mn', '--model-name', help="The name of the model", default='dasco')
-parser.add_argument('-gn', '--game-name', help="The name of the game", default="hopper-expert-v2")
+parser.add_argument('-mn', '--model-name', help="The name of the model", default='cql')
+parser.add_argument('-gn', '--game-name', help="The name of the game", default="halfcheetah-medium-expert-v2")
 parser.add_argument('-rn', '--run-name', help="The name of the run to save statistics", default="run")
-parser.add_argument('-al', '--algorithm', help="The algorithm to use", default="dasco")
+parser.add_argument('-al', '--algorithm', help="The algorithm to use", default="cql")
 parser.add_argument('-mt', '--max-timesteps', help="Max timestep per episode", default=1000, type=int)
 parser.add_argument('-e', '--epochs', help="Number of epochs", default=2000, type=int)
 
@@ -119,6 +125,10 @@ if __name__ == "__main__":
     elif args.algorithm == 'dasco':
         model = DASCOAgent(state_dim=state_dim, lr=3e-4, action_size=action_size, num_itr=5000, batch_size=256,
                            name=args.model_name)
+    elif args.algorithm == 'cql':
+        model = CQLAgent(critic_embedding=CriticEmbedding, policy_embedding=PolicyEmbedding, state_dim=state_dim, lr=1e-4,
+                 action_size=action_size, num_itr=5000, batch_size=256, frequency_mode='timesteps', name=args.model_name,
+                 memory=1e6, alpha=0.2)
 
     # Set trajectories data
     model.set_dataset(trajectories)
