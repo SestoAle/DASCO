@@ -106,7 +106,8 @@ class CQLAgent(nn.Module):
         # min and max values for continuous actions
         self.action_min_value = min_action_value
         self.action_max_value = max_action_value
-        self.alpha_tuning = False
+        self.alpha_tuning = True
+        self.lagrange = False
         # Distribution type for continuous actions
 
         self.memory = memory
@@ -246,6 +247,27 @@ class CQLAgent(nn.Module):
             dones_mb = self.dones[mini_batch_idxs]
             dones_mb = dones_mb.view(-1, 1)
 
+            actor_loss = None
+            action, logprob, probs, dist = self.forward(states_mb)
+            current_Q1, current_Q2 = self.critic(states_mb, action)
+            q = torch.min(current_Q1, current_Q2)
+            p_loss = ((self.alpha * logprob) - q).mean()
+
+            self.policy_optimizer.zero_grad()
+            p_loss.backward()
+            self.policy_optimizer.step()
+
+            p_losses.append(p_loss.detach().cpu())
+
+            if self.alpha_tuning:
+                alpha_loss = -(self.log_alpha * (logprob + self.target_entropy).detach()).mean()
+
+                self.alpha_optim.zero_grad()
+                alpha_loss.backward()
+                self.alpha_optim.step()
+
+                self.alpha = self.log_alpha.exp()
+
             with torch.no_grad():
                 target_Q = self.compute_target(next_states_mb, rewards_mb, dones_mb)
 
@@ -276,6 +298,16 @@ class CQLAgent(nn.Module):
             cql1_scaled_loss = ((torch.logsumexp(cat_q1 / self.temperature, dim=1).mean() * self.cql_weight * self.temperature) - current_Q1.mean()) * self.cql_weight
             cql2_scaled_loss = ((torch.logsumexp(cat_q2 / self.temperature, dim=1).mean() * self.cql_weight * self.temperature) - current_Q2.mean()) * self.cql_weight
 
+            if self.lagrange:
+                cql_alpha = torch.clamp(self.cql_log_alpha.exp(), min=0.0, max=1e6).to(device)
+                cql1_scaled_loss = cql_alpha * (cql1_scaled_loss - self.target_action_gap)
+                cql2_scaled_loss = cql_alpha * (cql2_scaled_loss - self.target_action_gap)
+
+                self.cql_alpha_optimizer.zero_grad()
+                cql_alpha_loss = (-cql1_scaled_loss - cql2_scaled_loss) * 0.5
+                cql_alpha_loss.backward(retain_graph=True)
+                self.cql_alpha_optimizer.step()
+
             # Compute critic loss
             critic_loss = F.mse_loss(current_Q1, target_Q) + cql1_scaled_loss + F.mse_loss(current_Q2, target_Q) + cql2_scaled_loss
 
@@ -285,35 +317,8 @@ class CQLAgent(nn.Module):
             self.critic_optimizer.step()
             c_losses.append(critic_loss.detach().cpu())
 
-            actor_loss = None
-            # Delayed policy updates
-            if self.total_itr % self.policy_freq == 0:
-
-                action, logprob, probs, dist = self.forward(states_mb)
-                current_Q1, current_Q2 = self.critic(states_mb, action)
-                q = torch.min(current_Q1, current_Q2)
-                p_loss = ((self.alpha * logprob) - q).mean()
-
-                self.policy_optimizer.zero_grad()
-                p_loss.backward()
-                self.policy_optimizer.step()
-
-                p_losses.append(p_loss.detach().cpu())
-
-                if self.alpha_tuning:
-
-                    cql_alpha = torch.clamp(self.cql_log_alpha.exp(), min=0.0, max=1e6).to(device)
-                    cql1_scaled_loss = cql_alpha * (cql1_scaled_loss - self.target_action_gap)
-                    cql2_scaled_loss = cql_alpha * (cql2_scaled_loss - self.target_action_gap)
-
-                    self.cql_alpha_optimizer.zero_grad()
-                    cql_alpha_loss = (-cql1_scaled_loss - cql2_scaled_loss) * 0.5
-                    cql_alpha_loss.backward(retain_graph=True)
-                    self.cql_alpha_optimizer.step()
-
-                # Update the frozen target models
-                self.copy_target(self.critic_target, self.critic, self.tau, False)
-                self.copy_target(self.policy_target, self.policy, self.tau, False)
+            # Update the frozen target models, ONLY THE CRITIC
+            self.copy_target(self.critic_target, self.critic, self.tau, False)
 
         return np.mean(p_losses), np.mean(c_losses), None, None
 
@@ -336,7 +341,7 @@ class CQLAgent(nn.Module):
             action, logprob, probs, dist = self.forward(states_pi)
 
         q1, q2 = self.critic(states_q, action)
-        return q1 - logprob, q2 - logprob
+        return q1 - logprob.detach(), q2 - logprob.detach()
 
     def compute_random_values(self, obs, actions, critic):
         random_values = self.critic(obs, actions)[critic]
