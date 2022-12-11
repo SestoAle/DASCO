@@ -268,7 +268,7 @@ class DASCOAgent(nn.Module):
 
             # Optimize discriminator
             # We update the discriminator more time than the generator
-            for ge in range(1):
+            for de in range(5):
                 # Take a mini-batch of batch_size experience
                 mini_batch_idxs = np.random.randint(0, len(self.states), size=self.batch_size)
 

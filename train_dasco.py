@@ -1,7 +1,7 @@
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 from agents.td3_plus_bc import TD3BCAgent
-from agents.dasco import DASCOAgent
+from agents.dasco_agent import DASCOAgent
 from agents.cql_agent import CQLAgent
 import d4rl
 from architectures.lunar_arch import *
