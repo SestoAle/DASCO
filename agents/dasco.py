@@ -14,52 +14,6 @@ LOG_SIG_MIN = -9.21
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
-class TanhTransform(pyd.transforms.Transform):
-    domain = pyd.constraints.real
-    codomain = pyd.constraints.interval(-1.0, 1.0)
-    bijective = True
-    sign = +1
-
-    def __init__(self, cache_size=1):
-        super().__init__(cache_size=cache_size)
-
-    @staticmethod
-    def atanh(x):
-        return 0.5 * (x.log1p() - (-x).log1p())
-
-    def __eq__(self, other):
-        return isinstance(other, TanhTransform)
-
-    def _call(self, x):
-        return x.tanh()
-
-    def _inverse(self, y):
-        # We do not clamp to the boundary here as it may degrade the performance of certain algorithms.
-        # one should use `cache_size=1` instead
-        return self.atanh(y)
-
-    def log_abs_det_jacobian(self, x, y):
-        # We use a formula that is more numerically stable, see details in the following link
-        # https://github.com/tensorflow/probability/commit/ef6bb176e0ebd1cf6e25c6b5cecdd2428c22963f#diff-e120f70e92e6741bca649f04fcd907b7
-        return 2. * (math.log(2.) - x - F.softplus(-2. * x))
-
-class SquashedNormal(pyd.transformed_distribution.TransformedDistribution):
-    def __init__(self, loc, scale):
-        self.loc = loc
-        self.scale = scale
-
-        self.base_dist = pyd.Normal(loc, scale)
-        transforms = [TanhTransform()]
-        super().__init__(self.base_dist, transforms)
-
-    @property
-    def mean(self):
-        mu = self.loc
-        for tr in self.transforms:
-            mu = tr(mu)
-        return mu
-
 class Policy(nn.Module):
     def __init__(self, state_dim, action_size=4, max_action_value=1, min_action_value=-1,
                  **kwargs):
@@ -158,16 +112,15 @@ class Generator(nn.Module):
         self.latent_space = 750
 
         # Layers specification
-        self.embedding_l1 = nn.Linear(state_dim, self.latent_space)
-        self.gen_l = nn.Linear(750 * 2, action_dim)
+        self.embedding_l1 = nn.Linear(state_dim * 2, self.latent_space)
+        self.gen_l = nn.Linear(750, action_dim)
 
     def forward(self, state):
         x = torch.reshape(state, (-1, self.state_dim))
+        noise = torch.rand((x.shape[0], self.state_dim)).to(device)
 
-        # x = torch.cat([x, noise], dim=1)
+        x = torch.cat([x, noise], dim=1)
         gen = F.relu(self.embedding_l1(x))
-        noise = torch.rand((x.shape[0], self.latent_space)).to(device)
-        gen = torch.cat([gen, noise], dim=1)
         action = F.tanh(self.gen_l(gen)) * self.max_action_value
         return action
 
@@ -238,9 +191,9 @@ class DASCOAgent(nn.Module):
 
     def get_instance_noise(self, actions, std=0.3):
         noise = torch.normal(mean=0, std=torch.ones_like(actions) * std).to(device)
-
-        if torch.norm(noise) > std:
-            noise = (noise / torch.norm(noise)) * std
+        n = torch.norm(noise, dim=1)
+        f = torch.min(n, torch.full(n.shape, 0.3).to(device)) / n
+        noise = noise * f.view(-1, 1)
 
         return noise
 
@@ -276,44 +229,30 @@ class DASCOAgent(nn.Module):
             self.critic_optimizer.zero_grad()
             critic_loss.backward()
             self.critic_optimizer.step()
+            # Update the frozen target models
+            self.copy_target(self.critic_target, self.critic, self.tau, False)
 
             c_losses.append(critic_loss.detach().cpu())
 
             actor_loss = None
             # Delayed policy updates
-            if self.total_itr % self.policy_freq == 0:
+            action, logprob, probs, dist = self.policy(states_mb)
+            q, _ = self.critic(states_mb, action)
 
-                action, logprob, probs, dist = self.policy(states_mb)
-                current_Q1, current_Q2 = self.critic(states_mb, action)
-                q = torch.min(current_Q1, current_Q2)
+            action_d, logit_d = self.discriminator(states_mb, action)
+            log_action_d = F.logsigmoid(logit_d)
+            probs = action_d
+            real_actions_probs, real_actions_logit = self.discriminator(states_mb, actions_mb)
+            probs = torch.min(real_actions_probs, probs)
+            probs = probs / real_actions_probs
+            probs = probs.detach()
+            p_loss = -(probs * q + log_action_d).mean()
 
-                action_d, logit_d = self.discriminator(states_mb, action)
-                log_action_d = F.logsigmoid(logit_d)
-                probs = action_d
-                real_actions_probs, real_actions_logit = self.discriminator(states_mb, actions_mb)
-                probs = torch.min(real_actions_probs, probs)
-                probs = probs / real_actions_probs
-                probs.detach()
-                p_loss = -(probs * q + log_action_d).mean()
+            self.policy_optimizer.zero_grad()
+            p_loss.backward()
+            self.policy_optimizer.step()
 
-                self.policy_optimizer.zero_grad()
-                p_loss.backward()
-                self.policy_optimizer.step()
-
-                p_losses.append(p_loss.detach().cpu())
-
-                if self.alpha_tuning:
-                    alpha_loss = -(self.log_alpha * (logprob + self.target_entropy).detach()).mean()
-
-                    self.alpha_optim.zero_grad()
-                    alpha_loss.backward()
-                    self.alpha_optim.step()
-
-                    self.alpha = self.log_alpha.exp()
-
-                # Update the frozen target models
-                self.copy_target(self.critic_target, self.critic, self.tau, False)
-                self.copy_target(self.policy_target, self.policy, self.tau, False)
+            p_losses.append(p_loss.detach().cpu())
 
             # Optimize generator
             real_label = torch.full((self.batch_size,), 1).to(device).float()
@@ -329,7 +268,7 @@ class DASCOAgent(nn.Module):
 
             # Optimize discriminator
             # We update the discriminator more time than the generator
-            for ge in range(5):
+            for ge in range(1):
                 # Take a mini-batch of batch_size experience
                 mini_batch_idxs = np.random.randint(0, len(self.states), size=self.batch_size)
 
@@ -337,7 +276,6 @@ class DASCOAgent(nn.Module):
                 actions_mb = self.actions[mini_batch_idxs]
 
                 # Loss on real action
-                # TODO: Noise
                 _, d_real_logit = self.discriminator(states_mb, actions_mb + self.get_instance_noise(actions_mb))
                 real_label = torch.full((self.batch_size,), 1).to(device).float()
                 err_d_real = F.mse_loss(F.sigmoid(d_real_logit), real_label) / 2.

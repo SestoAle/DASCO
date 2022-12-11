@@ -102,7 +102,7 @@ class SACAgent(nn.Module):
         # min and max values for continuous actions
         self.action_min_value = min_action_value
         self.action_max_value = max_action_value
-        self.alpha_tuning = False
+        self.alpha_tuning = True
         # Distribution type for continuous actions
 
         self.buffer = dict()
@@ -280,32 +280,28 @@ class SACAgent(nn.Module):
             c_losses.append(critic_loss.detach().cpu())
 
             actor_loss = None
-            # Delayed policy updates
-            if self.total_itr % self.policy_freq == 0:
+            action, logprob, probs, dist = self.forward(states_mb)
+            current_Q1, current_Q2 = self.critic(states_mb, action)
+            q = torch.min(current_Q1, current_Q2)
+            p_loss = ((self.alpha * logprob) - q).mean()
 
-                action, logprob, probs, dist = self.forward(states_mb)
-                current_Q1, current_Q2 = self.critic(states_mb, action)
-                q = torch.min(current_Q1, current_Q2)
-                p_loss = ((self.alpha * logprob) - q).mean()
+            self.policy_optimizer.zero_grad()
+            p_loss.backward()
+            self.policy_optimizer.step()
 
-                self.policy_optimizer.zero_grad()
-                p_loss.backward()
-                self.policy_optimizer.step()
+            p_losses.append(p_loss.detach().cpu())
 
-                p_losses.append(p_loss.detach().cpu())
+            if self.alpha_tuning:
+                alpha_loss = -(self.log_alpha * (logprob + self.target_entropy).detach()).mean()
 
-                if self.alpha_tuning:
-                    alpha_loss = -(self.log_alpha * (logprob + self.target_entropy).detach()).mean()
+                self.alpha_optim.zero_grad()
+                alpha_loss.backward()
+                self.alpha_optim.step()
 
-                    self.alpha_optim.zero_grad()
-                    alpha_loss.backward()
-                    self.alpha_optim.step()
+                self.alpha = self.log_alpha.exp()
 
-                    self.alpha = self.log_alpha.exp()
-
-                # Update the frozen target models
-                self.copy_target(self.critic_target, self.critic, self.tau, False)
-                self.copy_target(self.policy_target, self.policy, self.tau, False)
+            # Update the frozen target models
+            self.copy_target(self.critic_target, self.critic, self.tau, False)
 
         return np.mean(p_losses)
 

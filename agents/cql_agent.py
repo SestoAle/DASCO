@@ -94,7 +94,7 @@ class CQLAgent(nn.Module):
         # CLQ param
         self.with_lagrange = False
         self.temperature = 1.0
-        self.cql_weight = 1.0
+        self.cql_weight = 5.0
         self.target_action_gap = 10.0
 
 
@@ -280,8 +280,13 @@ class CQLAgent(nn.Module):
             temp_states_mb = states_mb.unsqueeze(1).repeat(1, num_repeat, 1).view(self.batch_size * num_repeat, self.state_dim)
             temp_next_states_mb = next_states_mb.unsqueeze(1).repeat(1, num_repeat, 1).view(self.batch_size * num_repeat, self.state_dim)
 
-            current_pi_values1, current_pi_values2 = self.compute_policy_values(temp_states_mb, temp_states_mb)
-            next_pi_values1, next_pi_values2 = self.compute_policy_values(temp_next_states_mb, temp_states_mb)
+            cql_current_actions, cql_current_log_pis, _, _ = self.forward(temp_states_mb)
+            cql_next_actions, cql_next_log_pis, _, _ = self.forward(temp_next_states_mb)
+            cql_current_actions, cql_current_log_pis = cql_current_actions.detach(), cql_current_log_pis.detach()
+            cql_next_actions, cql_next_log_pis = cql_next_actions.detach(), cql_next_log_pis.detach()
+
+            current_pi_values1, current_pi_values2 = self.compute_policy_values(temp_states_mb, temp_states_mb, cql_current_actions, cql_current_log_pis)
+            next_pi_values1, next_pi_values2 = self.compute_policy_values(temp_next_states_mb, temp_states_mb, cql_next_actions, cql_next_log_pis)
 
             random_values1 = self.compute_random_values(temp_states_mb, random_actions, 0).reshape(self.batch_size, num_repeat, 1)
             random_values2 = self.compute_random_values(temp_states_mb, random_actions, 1).reshape(self.batch_size, num_repeat, 1)
@@ -292,11 +297,11 @@ class CQLAgent(nn.Module):
             next_pi_values1 = next_pi_values1.reshape(self.batch_size, num_repeat, 1)
             next_pi_values2 = next_pi_values2.reshape(self.batch_size, num_repeat, 1)
 
-            cat_q1 = torch.cat([random_values1, current_pi_values1, next_pi_values1], dim=1)
-            cat_q2 = torch.cat([random_values2, current_pi_values2, next_pi_values2], dim=1)
+            cat_q1 = torch.cat([random_values1, next_pi_values1, current_pi_values1], dim=1)
+            cat_q2 = torch.cat([random_values2, next_pi_values2, current_pi_values2], dim=1)
 
-            cql1_scaled_loss = ((torch.logsumexp(cat_q1 / self.temperature, dim=1).mean() * self.cql_weight * self.temperature) - current_Q1.mean()) * self.cql_weight
-            cql2_scaled_loss = ((torch.logsumexp(cat_q2 / self.temperature, dim=1).mean() * self.cql_weight * self.temperature) - current_Q2.mean()) * self.cql_weight
+            cql1_scaled_loss = ((torch.logsumexp(cat_q1 / self.temperature, dim=1).mean() * self.temperature) - current_Q1.mean()) * self.cql_weight
+            cql2_scaled_loss = ((torch.logsumexp(cat_q2 / self.temperature, dim=1).mean() * self.temperature) - current_Q2.mean()) * self.cql_weight
 
             if self.lagrange:
                 cql_alpha = torch.clamp(self.cql_log_alpha.exp(), min=0.0, max=1e6).to(device)
@@ -336,9 +341,11 @@ class CQLAgent(nn.Module):
 
         return target
 
-    def compute_policy_values(self, states_pi, states_q):
-        with torch.no_grad():
-            action, logprob, probs, dist = self.forward(states_pi)
+    def compute_policy_values(self, states_pi, states_q, action=None, logprob=None):
+
+        if action is None:
+            with torch.no_grad():
+                action, logprob, probs, dist = self.forward(states_pi)
 
         q1, q2 = self.critic(states_q, action)
         return q1 - logprob.detach(), q2 - logprob.detach()
