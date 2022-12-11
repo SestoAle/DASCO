@@ -154,12 +154,11 @@ class DASCOAgent(nn.Module):
         self.policy_loss = torch.nn.MSELoss()
         self.policy_optimizer = torch.optim.Adam(self.policy.parameters(), lr=self.lr)
         self.critic = Critic(self.state_dim, self.action_size).to(device)
-        self.critic_loss = torch.nn.MSELoss()
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.lr)
         self.discriminator = Discriminator(self.state_dim, self.action_size).to(device)
-        self.discriminator_optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.lr)
+        self.discriminator_optimizer = torch.optim.Adam(self.discriminator.parameters(), lr=self.lr)
         self.generator = Generator(self.state_dim, self.action_size).to(device)
-        self.generator_optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.lr)
+        self.generator_optimizer = torch.optim.Adam(self.generator.parameters(), lr=self.lr)
 
         # Define the targets and init them
         # Define the targets and init them
