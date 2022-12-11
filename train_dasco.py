@@ -82,10 +82,10 @@ def eval(model, max_test_ep_len, env, state_mean=None, state_std=None):
     return np.mean(episode_rewards), d4rl_score
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-mn', '--model-name', help="The name of the model", default='cql')
+parser.add_argument('-mn', '--model-name', help="The name of the model", default='dasco')
 parser.add_argument('-gn', '--game-name', help="The name of the game", default="walker2d-medium-expert-v2")
 parser.add_argument('-rn', '--run-name', help="The name of the run to save statistics", default="run")
-parser.add_argument('-al', '--algorithm', help="The algorithm to use", default="cql")
+parser.add_argument('-al', '--algorithm', help="The algorithm to use", default="dasco")
 parser.add_argument('-mt', '--max-timesteps', help="Max timestep per episode", default=1000, type=int)
 parser.add_argument('-e', '--epochs', help="Number of epochs", default=2000, type=int)
 
