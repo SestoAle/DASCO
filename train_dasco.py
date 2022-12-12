@@ -45,6 +45,7 @@ def eval(model, max_test_ep_len, env, state_mean=None, state_std=None):
     global visualize
     global args
     episode_rewards = []
+    model.eval()
     for episode in range(10):
 
         # init episode
@@ -57,10 +58,13 @@ def eval(model, max_test_ep_len, env, state_mean=None, state_std=None):
                 running_state = (np.asarray(running_state).reshape(1, -1) - state_mean) / (state_std)
 
             running_state = torch.from_numpy(running_state).float().to(device)
-            if args.algorithm == "cql":
-                action, _, _, _ = model(running_state)
-            else:
-                action, _, _, _ = model.policy(running_state, deterministic=False)
+            with torch.no_grad():
+                if args.algorithm == "cql":
+                    action, _, _, _ = model(running_state)
+                else:
+                    action, _, _, _ = model.policy(running_state, deterministic=False)
+                    # action = model.generator(running_state)
+
             action = action.detach().cpu().numpy()[0]
             running_state, running_reward, done = env.execute(action, visualize)
             running_state = running_state['global_in']
@@ -83,7 +87,7 @@ def eval(model, max_test_ep_len, env, state_mean=None, state_std=None):
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-mn', '--model-name', help="The name of the model", default='dasco')
-parser.add_argument('-gn', '--game-name', help="The name of the game", default="walker2d-medium-expert-v2")
+parser.add_argument('-gn', '--game-name', help="The name of the game", default="walker2d-expert-v2")
 parser.add_argument('-rn', '--run-name', help="The name of the run to save statistics", default="run")
 parser.add_argument('-al', '--algorithm', help="The algorithm to use", default="dasco")
 parser.add_argument('-mt', '--max-timesteps', help="Max timestep per episode", default=1000, type=int)
@@ -123,7 +127,7 @@ if __name__ == "__main__":
         model = TD3BCAgent(state_dim=state_dim, lr=3e-4, action_size=action_size, num_itr=5000, batch_size=256,
                        name=args.model_name)
     elif args.algorithm == 'dasco':
-        model = DASCOAgent(state_dim=state_dim, lr=3e-4, action_size=action_size, num_itr=5000, batch_size=256,
+        model = DASCOAgent(state_dim=state_dim, lr=1e-4, action_size=action_size, num_itr=5000, batch_size=256,
                            name=args.model_name)
     elif args.algorithm == 'cql':
         model = CQLAgent(critic_embedding=CriticEmbedding, policy_embedding=PolicyEmbedding, state_dim=state_dim, lr=1e-4,

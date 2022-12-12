@@ -112,14 +112,14 @@ class Generator(nn.Module):
         self.latent_space = 750
 
         # Layers specification
-        self.embedding_l1 = nn.Linear(state_dim * 2, self.latent_space)
+        self.embedding_l1 = nn.Linear(state_dim, self.latent_space)
         self.gen_l = nn.Linear(750, action_dim)
 
     def forward(self, state):
         x = torch.reshape(state, (-1, self.state_dim))
         noise = torch.rand((x.shape[0], self.state_dim)).to(device)
 
-        x = torch.cat([x, noise], dim=1)
+        # x = torch.cat([x, noise], dim=1)
         gen = F.relu(self.embedding_l1(x))
         action = F.tanh(self.gen_l(gen)) * self.max_action_value
         return action
@@ -151,7 +151,6 @@ class DASCOAgent(nn.Module):
 
         # Define the entities that we need, policy and actor
         self.policy = Policy(self.state_dim, self.action_size, self.max_action, self.min_action_value).to(device)
-        self.policy_loss = torch.nn.MSELoss()
         self.policy_optimizer = torch.optim.Adam(self.policy.parameters(), lr=self.lr)
         self.critic = Critic(self.state_dim, self.action_size).to(device)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.lr)
@@ -161,11 +160,8 @@ class DASCOAgent(nn.Module):
         self.generator_optimizer = torch.optim.Adam(self.generator.parameters(), lr=self.lr)
 
         # Define the targets and init them
-        # Define the targets and init them
-        self.policy_target = Policy(self.state_dim, self.action_size, self.max_action, self.min_action_value).to(device)
         self.critic_target = Critic(self.state_dim, self.action_size).to(device)
         self.copy_target(self.critic_target, self.critic, self.tau, True)
-        self.copy_target(self.policy_target, self.policy, self.tau, True)
 
         self.total_itr = 0
 
@@ -197,6 +193,7 @@ class DASCOAgent(nn.Module):
         return noise
 
     def update(self):
+        self.train()
         c_losses = []
         p_losses = []
         d_losses = []
@@ -275,13 +272,15 @@ class DASCOAgent(nn.Module):
                 actions_mb = self.actions[mini_batch_idxs]
 
                 # Loss on real action
-                _, d_real_logit = self.discriminator(states_mb, actions_mb + self.get_instance_noise(actions_mb))
+                # _, d_real_logit = self.discriminator(states_mb, actions_mb + self.get_instance_noise(actions_mb))
+                _, d_real_logit = self.discriminator(states_mb, actions_mb)
                 real_label = torch.full((self.batch_size,), 1).to(device).float()
                 err_d_real = F.mse_loss(F.sigmoid(d_real_logit), real_label) / 2.
 
                 def loss_fake_action(fake_action):
                     fake_label = torch.full((self.batch_size,), 0,).to(device).float()
-                    _, d_fake_logit = self.discriminator(states_mb, fake_action.detach() + self.get_instance_noise(fake_action))
+                    # _, d_fake_logit = self.discriminator(states_mb, fake_action.detach() + self.get_instance_noise(fake_action))
+                    _, d_fake_logit = self.discriminator(states_mb, fake_action.detach())
                     err_d_fake = F.mse_loss(F.sigmoid(d_fake_logit), fake_label) / 2.
                     return err_d_fake
 
