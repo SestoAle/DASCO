@@ -113,7 +113,7 @@ class Generator(nn.Module):
         self.noise_dim = 3
 
         # Layers specification
-        self.embedding_l1 = nn.Linear(state_dim * self.noise_dim, self.latent_space)
+        self.embedding_l1 = nn.Linear(state_dim + self.noise_dim, self.latent_space)
         self.gen_l = nn.Linear(750, action_dim)
 
     def forward(self, state):
