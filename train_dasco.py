@@ -62,8 +62,8 @@ def eval(model, max_test_ep_len, env, state_mean=None, state_std=None):
                 if args.algorithm == "cql":
                     action, _, _, _ = model(running_state)
                 else:
-                    action, _, _, _ = model.generator(running_state)
-                    # action = model.generator(running_state)
+                    # action, _, _, _ = model.policy(running_state, deterministic=False)
+                    action = model.generator(running_state)
 
             action = action.detach().cpu().numpy()[0]
             running_state, running_reward, done = env.execute(action, visualize)
