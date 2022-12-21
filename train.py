@@ -102,10 +102,10 @@ if __name__ == "__main__":
                     logging=logging, total_episode=total_episode, curriculum=curriculum, demonstrations_name="dems",
                     frequency_mode=frequency_mode, curriculum_mode='episodes', callback_function=callback)
 
-    # try:
-    #     runner.run()
-    # finally:
-    #     env.close()
+    try:
+        runner.run()
+    finally:
+        env.close()
 
 
 "%%%%%%%%%%%%%%%%%%%%%%%%%%"

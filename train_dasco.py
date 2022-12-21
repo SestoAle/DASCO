@@ -11,7 +11,7 @@ from utils import *
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def load_demonstrations_d4rl(env, normalize=False):
+def load_demonstrations_d4rl(env, normalize=True):
     dataset = d4rl.qlearning_dataset(env.env)
 
     states_mean = None
@@ -62,7 +62,7 @@ def eval(model, max_test_ep_len, env, state_mean=None, state_std=None):
                 if args.algorithm == "cql":
                     action, _, _, _ = model(running_state)
                 else:
-                    action, _, _, _ = model.policy(running_state, deterministic=False)
+                    action, _, _, _ = model.generator(running_state)
                     # action = model.generator(running_state)
 
             action = action.detach().cpu().numpy()[0]
