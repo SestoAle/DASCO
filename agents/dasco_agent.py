@@ -235,7 +235,7 @@ class DASCOAgent(nn.Module):
             c_losses.append(critic_loss.detach().cpu())
 
             actor_loss = None
-            action, logprob, probs, dist = self.forward(states_mb)
+            action, logprob, probs, dist = self.policy(states_mb)
             current_Q1, current_Q2 = self.critic(states_mb, action)
             q = torch.min(current_Q1, current_Q2)
             p_loss = ((self.alpha * logprob) - q).mean()

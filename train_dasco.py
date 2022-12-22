@@ -65,7 +65,6 @@ def eval(model, max_test_ep_len, env, state_mean=None, state_std=None):
                     action, _, _, _ = model.policy(running_state, deterministic=False)
                     # action = model.generator(running_state)
             action = action.detach().cpu().numpy()[0]
-            print(action)
             running_state, running_reward, done = env.execute(action, visualize)
             running_state = running_state['global_in']
             total_reward += running_reward
