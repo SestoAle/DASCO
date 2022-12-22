@@ -233,23 +233,26 @@ class DASCOAgent(nn.Module):
 
             actor_loss = None
             # Delayed policy updates
-            action, logprob, probs, dist = self.policy(states_mb)
-            q, _ = self.critic(states_mb, action)
+            with torch.no_grad():
+                q, _ = self.critic(states_mb, action)
 
-            action_d, logit_d = self.discriminator(states_mb, action)
-            log_action_d = F.logsigmoid(logit_d)
-            probs = action_d
-            real_actions_probs, real_actions_logit = self.discriminator(states_mb, actions_mb)
-            probs = torch.min(real_actions_probs, probs)
-            probs = probs / real_actions_probs
-            probs = probs.detach()
+            action, logprob, probs, dist = self.policy(states_mb)
+            with torch.no_grad():
+                action_d, logit_d = self.discriminator(states_mb, action)
+                log_action_d = F.logsigmoid(logit_d)
+                probs = action_d
+                real_actions_probs, real_actions_logit = self.discriminator(states_mb, actions_mb)
+                probs = torch.min(real_actions_probs, probs)
+                probs = probs / real_actions_probs
+                probs = probs.detach()
+
             p_loss = -(probs * q + log_action_d).mean()
 
             self.policy_optimizer.zero_grad()
             p_loss.backward()
             self.policy_optimizer.step()
-
             p_losses.append(p_loss.detach().cpu())
+
 
             # Optimize generator
             real_label = torch.full((self.batch_size,), 1).to(device).float()
@@ -273,14 +276,16 @@ class DASCOAgent(nn.Module):
                 actions_mb = self.actions[mini_batch_idxs]
 
                 # Loss on real action
-                _, d_real_logit = self.discriminator(states_mb, actions_mb + self.get_instance_noise(actions_mb.detach()))
+                _, d_real_logit = self.discriminator(states_mb, actions_mb +
+                                                     self.get_instance_noise(actions_mb.detach()))
                 # _, d_real_logit = self.discriminator(states_mb, actions_mb)
                 real_label = torch.full((self.batch_size,), 1).to(device).float()
                 err_d_real = F.mse_loss(F.sigmoid(d_real_logit), real_label) / 2.
 
                 def loss_fake_action(fake_action):
                     fake_label = torch.full((self.batch_size,), 0,).to(device).float()
-                    _, d_fake_logit = self.discriminator(states_mb, fake_action.detach() + self.get_instance_noise(fake_action.detach()))
+                    _, d_fake_logit = self.discriminator(states_mb, fake_action.detach() +
+                                                         self.get_instance_noise(fake_action.detach()))
                     # _, d_fake_logit = self.discriminator(states_mb, fake_action.detach())
                     err_d_fake = F.mse_loss(F.sigmoid(d_fake_logit), fake_label) / 2.
                     return err_d_fake

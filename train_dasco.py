@@ -18,7 +18,7 @@ def load_demonstrations_d4rl(env, normalize=True):
     states_std = None
     if normalize:
         states_mean = np.mean(dataset['observations'], axis=0)
-        states_std = np.std(dataset['observations'], axis=0) + 1e-3
+        states_std = np.std(dataset['observations'], axis=0)
 
     dems = dict(states=[], actions=[], rewards=[], next_states=[], dones=[])
 
@@ -62,9 +62,9 @@ def eval(model, max_test_ep_len, env, state_mean=None, state_std=None):
                 if args.algorithm == "cql":
                     action, _, _, _ = model(running_state)
                 else:
-                    # action, _, _, _ = model.policy(running_state, deterministic=False)
-                    action = model.generator(running_state)
-
+                    action, _, _, _ = model.policy(running_state, deterministic=False)
+                    # action = model.generator(running_state)
+            print(action)
             action = action.detach().cpu().numpy()[0]
             running_state, running_reward, done = env.execute(action, visualize)
             running_state = running_state['global_in']
