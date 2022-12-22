@@ -10,7 +10,7 @@ class MujocoEnvWrapper():
     def reset(self):
         # Sample engine strength
         state = self.env.reset()
-        state = dict(global_in=state)
+        # state = dict(global_in=state)
         self.ep_reward = 0
         self.step = 0
 
@@ -28,7 +28,7 @@ class MujocoEnvWrapper():
             self.env.render()
         self.ep_reward += reward
         self.step += 1
-        state = dict(global_in=state)
+        # state = dict(global_in=state)
         return state, reward, done
 
     def set_config(self, config):
