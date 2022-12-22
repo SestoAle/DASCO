@@ -15,7 +15,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Parse arguments for training
 parser = argparse.ArgumentParser()
 parser.add_argument('-mn', '--model-name', help="The name of the policy", default='sac')
-parser.add_argument('-gn', '--game-name', help="The name of the game", default="Walker2D")
+parser.add_argument('-gn', '--game-name', help="The name of the game", default="Walker2d")
 parser.add_argument('-sf', '--save-frequency', help="How mane episodes after save the model", default=1000)
 parser.add_argument('-lg', '--logging', help="How many episodes after logging statistics", default=1)
 parser.add_argument('-mt', '--max-timesteps', help="Max timestep per episode", default=1000)
@@ -79,7 +79,7 @@ if __name__ == "__main__":
         max_timesteps = 1000
         visualize = False
         env = MujocoEnvWrapper(args.game_name)
-    elif 'Walker2D' in args.game_name:
+    elif 'Walker2d' in args.game_name:
         action_size = 6
         state_dim = 16 + 1
         max_timesteps = 1000
