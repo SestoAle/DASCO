@@ -260,47 +260,47 @@ class DASCOAgent(nn.Module):
 
             p_losses.append(p_loss.detach().cpu())
 
-            # Optimize generator
-            real_label = torch.full((self.batch_size,), 1).to(device).float()
-            action_fake = self.generator(states_mb)
-
-            _, logit = self.discriminator(states_mb, action_fake)
-            g_loss = F.binary_cross_entropy_with_logits(logit, real_label)
-
-            self.generator_optimizer.zero_grad()
-            g_loss.backward()
-            self.generator_optimizer.step()
-            g_losses.append(g_loss.detach().cpu())
-
-            # Optimize discriminator
-            # We update the discriminator more time than the generator
-            for de in range(5):
-                # Take a mini-batch of batch_size experience
-                mini_batch_idxs = np.random.randint(0, len(self.states), size=self.batch_size)
-
-                states_mb = self.states[mini_batch_idxs]
-                actions_mb = self.actions[mini_batch_idxs]
-
-                # Loss on real action
-                _, d_real_logit = self.discriminator(states_mb, actions_mb + self.get_instance_noise(actions_mb.detach()))
-                # _, d_real_logit = self.discriminator(states_mb, actions_mb)
-                real_label = torch.full((self.batch_size,), 1).to(device).float()
-                err_d_real = F.mse_loss(F.sigmoid(d_real_logit), real_label) / 2.
-
-                def loss_fake_action(fake_action):
-                    fake_label = torch.full((self.batch_size,), 0,).to(device).float()
-                    _, d_fake_logit = self.discriminator(states_mb, fake_action.detach() + self.get_instance_noise(fake_action.detach()))
-                    # _, d_fake_logit = self.discriminator(states_mb, fake_action.detach())
-                    err_d_fake = F.mse_loss(F.sigmoid(d_fake_logit), fake_label) / 2.
-                    return err_d_fake
-
-                fake_action_aux = self.generator(states_mb)
-                fake_action_pi, _, _, _ = self.policy(states_mb)
-                err_d_fake = loss_fake_action(fake_action_aux) + loss_fake_action(fake_action_pi)
-                self.discriminator_optimizer.zero_grad()
-                (err_d_real + err_d_fake).backward()
-                self.discriminator_optimizer.step()
-                d_losses.append((err_d_fake + err_d_real).detach().cpu())
+            # # Optimize generator
+            # real_label = torch.full((self.batch_size,), 1).to(device).float()
+            # action_fake = self.generator(states_mb)
+            #
+            # _, logit = self.discriminator(states_mb, action_fake)
+            # g_loss = F.binary_cross_entropy_with_logits(logit, real_label)
+            #
+            # self.generator_optimizer.zero_grad()
+            # g_loss.backward()
+            # self.generator_optimizer.step()
+            # g_losses.append(g_loss.detach().cpu())
+            #
+            # # Optimize discriminator
+            # # We update the discriminator more time than the generator
+            # for de in range(5):
+            #     # Take a mini-batch of batch_size experience
+            #     mini_batch_idxs = np.random.randint(0, len(self.states), size=self.batch_size)
+            #
+            #     states_mb = self.states[mini_batch_idxs]
+            #     actions_mb = self.actions[mini_batch_idxs]
+            #
+            #     # Loss on real action
+            #     _, d_real_logit = self.discriminator(states_mb, actions_mb + self.get_instance_noise(actions_mb.detach()))
+            #     # _, d_real_logit = self.discriminator(states_mb, actions_mb)
+            #     real_label = torch.full((self.batch_size,), 1).to(device).float()
+            #     err_d_real = F.mse_loss(F.sigmoid(d_real_logit), real_label) / 2.
+            #
+            #     def loss_fake_action(fake_action):
+            #         fake_label = torch.full((self.batch_size,), 0,).to(device).float()
+            #         _, d_fake_logit = self.discriminator(states_mb, fake_action.detach() + self.get_instance_noise(fake_action.detach()))
+            #         # _, d_fake_logit = self.discriminator(states_mb, fake_action.detach())
+            #         err_d_fake = F.mse_loss(F.sigmoid(d_fake_logit), fake_label) / 2.
+            #         return err_d_fake
+            #
+            #     fake_action_aux = self.generator(states_mb)
+            #     fake_action_pi, _, _, _ = self.policy(states_mb)
+            #     err_d_fake = loss_fake_action(fake_action_aux) + loss_fake_action(fake_action_pi)
+            #     self.discriminator_optimizer.zero_grad()
+            #     (err_d_real + err_d_fake).backward()
+            #     self.discriminator_optimizer.step()
+            #     d_losses.append((err_d_fake + err_d_real).detach().cpu())
 
         end = time.time()
         print("Time: {}".format(end - start))
