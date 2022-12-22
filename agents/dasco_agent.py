@@ -142,7 +142,7 @@ class DASCOAgent(nn.Module):
         self.tau = tau
         self.alpha = alpha
         self.policy_freq = policy_freq
-        self.alpha_tuning = False
+        self.alpha_tuning = True
         # Action specification
         self.action_size = action_size
         self.max_action = max_action_value
@@ -159,6 +159,11 @@ class DASCOAgent(nn.Module):
         self.discriminator_optimizer = torch.optim.Adam(self.discriminator.parameters(), lr=self.lr)
         self.generator = Generator(self.state_dim, self.action_size).to(device)
         self.generator_optimizer = torch.optim.Adam(self.generator.parameters(), lr=self.lr)
+
+        if self.alpha_tuning:
+            self.target_entropy = -torch.prod(torch.Tensor((action_size, )).to(device)).item()
+            self.log_alpha = torch.zeros(1, requires_grad=True, device=device)
+            self.alpha_optim = torch.optim.Adam([self.log_alpha], lr=self.lr)
 
         # Define the targets and init them
         self.critic_target = Critic(self.state_dim, self.action_size).to(device)
@@ -226,33 +231,34 @@ class DASCOAgent(nn.Module):
             self.critic_optimizer.zero_grad()
             critic_loss.backward()
             self.critic_optimizer.step()
-            # Update the frozen target models
-            self.copy_target(self.critic_target, self.critic, self.tau, False)
 
             c_losses.append(critic_loss.detach().cpu())
 
             actor_loss = None
-            # Delayed policy updates
-            with torch.no_grad():
-                q, _ = self.critic(states_mb, action)
-
-            action, logprob, probs, dist = self.policy(states_mb)
-            with torch.no_grad():
-                action_d, logit_d = self.discriminator(states_mb, action)
-                log_action_d = F.logsigmoid(logit_d)
-                probs = action_d
-                real_actions_probs, real_actions_logit = self.discriminator(states_mb, actions_mb)
-                probs = torch.min(real_actions_probs, probs)
-                probs = probs / real_actions_probs
-                probs = probs.detach()
-
-            p_loss = -(probs * q + log_action_d).mean()
+            action, logprob, probs, dist = self.forward(states_mb)
+            current_Q1, current_Q2 = self.critic(states_mb, action)
+            q = torch.min(current_Q1, current_Q2)
+            p_loss = ((self.alpha * logprob) - q).mean()
 
             self.policy_optimizer.zero_grad()
             p_loss.backward()
             self.policy_optimizer.step()
+
             p_losses.append(p_loss.detach().cpu())
 
+            if self.alpha_tuning:
+                alpha_loss = -(self.log_alpha * (logprob + self.target_entropy).detach()).mean()
+
+                self.alpha_optim.zero_grad()
+                alpha_loss.backward()
+                self.alpha_optim.step()
+
+                self.alpha = self.log_alpha.exp()
+
+            # Update the frozen target models
+            self.copy_target(self.critic_target, self.critic, self.tau, False)
+
+            p_losses.append(p_loss.detach().cpu())
 
             # Optimize generator
             real_label = torch.full((self.batch_size,), 1).to(device).float()
@@ -276,16 +282,14 @@ class DASCOAgent(nn.Module):
                 actions_mb = self.actions[mini_batch_idxs]
 
                 # Loss on real action
-                _, d_real_logit = self.discriminator(states_mb, actions_mb +
-                                                     self.get_instance_noise(actions_mb.detach()))
+                _, d_real_logit = self.discriminator(states_mb, actions_mb + self.get_instance_noise(actions_mb.detach()))
                 # _, d_real_logit = self.discriminator(states_mb, actions_mb)
                 real_label = torch.full((self.batch_size,), 1).to(device).float()
                 err_d_real = F.mse_loss(F.sigmoid(d_real_logit), real_label) / 2.
 
                 def loss_fake_action(fake_action):
                     fake_label = torch.full((self.batch_size,), 0,).to(device).float()
-                    _, d_fake_logit = self.discriminator(states_mb, fake_action.detach() +
-                                                         self.get_instance_noise(fake_action.detach()))
+                    _, d_fake_logit = self.discriminator(states_mb, fake_action.detach() + self.get_instance_noise(fake_action.detach()))
                     # _, d_fake_logit = self.discriminator(states_mb, fake_action.detach())
                     err_d_fake = F.mse_loss(F.sigmoid(d_fake_logit), fake_label) / 2.
                     return err_d_fake
