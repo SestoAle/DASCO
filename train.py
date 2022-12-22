@@ -15,7 +15,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Parse arguments for training
 parser = argparse.ArgumentParser()
 parser.add_argument('-mn', '--model-name', help="The name of the policy", default='sac')
-parser.add_argument('-gn', '--game-name', help="The name of the game", default="Hopper")
+parser.add_argument('-gn', '--game-name', help="The name of the game", default="Walker2D")
 parser.add_argument('-sf', '--save-frequency', help="How mane episodes after save the model", default=1000)
 parser.add_argument('-lg', '--logging', help="How many episodes after logging statistics", default=1)
 parser.add_argument('-mt', '--max-timesteps', help="Max timestep per episode", default=1000)
@@ -94,18 +94,18 @@ if __name__ == "__main__":
     agent = SACAgent(critic_embedding=CriticEmbedding, policy_embedding=PolicyEmbedding, state_dim=state_dim, lr=1e-4,
                      action_size=action_size, num_itr=1, batch_size=256, frequency_mode=frequency_mode, name=model_name,
                      memory=memory, alpha=0.2)
-
-    # Create runner
-    # This class manages the evaluation of the policy and the collection of experience in a parallel setting
-    # (not vectorized)
-    runner = SRunner(agent=agent, frequency=frequency, env=env, save_frequency=save_frequency, random_actions=random_actions,
-                    logging=logging, total_episode=total_episode, curriculum=curriculum, demonstrations_name="dems",
-                    frequency_mode=frequency_mode, curriculum_mode='episodes', callback_function=callback)
-
-    try:
-        runner.run()
-    finally:
-        env.close()
+    #
+    # # Create runner
+    # # This class manages the evaluation of the policy and the collection of experience in a parallel setting
+    # # (not vectorized)
+    # runner = SRunner(agent=agent, frequency=frequency, env=env, save_frequency=save_frequency, random_actions=random_actions,
+    #                 logging=logging, total_episode=total_episode, curriculum=curriculum, demonstrations_name="dems",
+    #                 frequency_mode=frequency_mode, curriculum_mode='episodes', callback_function=callback)
+    #
+    # try:
+    #     runner.run()
+    # finally:
+    #     env.close()
 
 
 "%%%%%%%%%%%%%%%%%%%%%%%%%%"
@@ -117,7 +117,7 @@ episode_num = 0
 offline = True
 
 if offline:
-    env = MujocoEnvWrapper("hopper-medium-expert-v2")
+    env = MujocoEnvWrapper("walker2d-expert-v2")
     random_actions = 0
     dems, _, _ = load_demonstrations_d4rl(env)
     for i in range(len(dems['states'])):
@@ -130,7 +130,6 @@ if offline:
 
         agent.add_to_buffer(state, next_state, action, reward, 0, done_bool)
     print(len(agent.buffer['states']))
-    input('...')
 
 state, done = env.reset(), False
 for t in range(int(1e100)):
@@ -142,6 +141,8 @@ for t in range(int(1e100)):
         action = env.env.action_space.sample()
         logprobs = 0
     else:
+        agent.eval()
+        agent.policy.eval()
         action, logprobs, probs, dist = agent(torch.from_numpy(np.asarray(state)).to(device).float())
         action = action.detach().cpu().numpy()[0]
         logprobs = logprobs.detach().cpu().numpy()

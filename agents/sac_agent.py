@@ -243,6 +243,8 @@ class SACAgent(nn.Module):
                 a.data.copy_((1 - tau) * a.data + tau * b.data)
 
     def update(self):
+        self.train()
+        self.policy.train()
         c_losses = []
         p_losses = []
         for _ in range(self.num_itr):
