@@ -46,6 +46,7 @@ def eval(model, max_test_ep_len, env, state_mean=None, state_std=None):
     global args
     episode_rewards = []
     model.eval()
+    model.policy.eval()
     for episode in range(10):
 
         # init episode

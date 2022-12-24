@@ -210,6 +210,7 @@ class DASCOAgent(nn.Module):
 
     def update(self):
         self.train()
+        self.policy.train()
         c_losses = []
         p_losses = []
         d_losses = []
@@ -217,21 +218,16 @@ class DASCOAgent(nn.Module):
         start = time.time()
         for _ in range(self.num_itr):
             self.total_itr += 1
+            # Take a mini-batch of batch_size experience
+            mini_batch_idxs = np.random.randint(0, len(self.states), size=self.batch_size)
 
-            mini_batch_idxs = np.random.choice(range(len(self.buffer['states'])), self.batch_size)
-            states_mb = [self.buffer['states'][id] for id in mini_batch_idxs]
-            states_mb = torch.from_numpy(np.asarray(states_mb)).to(device).float()
-            next_states_mb = [self.buffer['states_n'][id] for id in mini_batch_idxs]
-            next_states_mb = torch.from_numpy(np.asarray(next_states_mb)).to(device).float()
-            rewards_mb = [self.buffer['rewards'][id] for id in mini_batch_idxs]
-            rewards_mb = torch.from_numpy(np.asarray(rewards_mb)).to(device).float()
+            states_mb = self.states[mini_batch_idxs]
+            next_states_mb = self.next_states[mini_batch_idxs]
+            actions_mb = self.actions[mini_batch_idxs]
+            rewards_mb = self.rewards[mini_batch_idxs]
             rewards_mb = rewards_mb.view(-1, 1)
-            dones_mb = [self.buffer['terminals'][id] for id in mini_batch_idxs]
-            dones_mb = torch.from_numpy(np.asarray(dones_mb)).to(device).float()
+            dones_mb = self.dones[mini_batch_idxs]
             dones_mb = dones_mb.view(-1, 1)
-
-            actions_mb = [self.buffer['actions'][id] for id in mini_batch_idxs]
-            actions_mb = torch.from_numpy(np.asarray(actions_mb)).to(device).float()
 
             with torch.no_grad():
                 target_Q = self.compute_target(next_states_mb, rewards_mb, dones_mb)
@@ -246,79 +242,76 @@ class DASCOAgent(nn.Module):
             self.critic_optimizer.zero_grad()
             critic_loss.backward()
             self.critic_optimizer.step()
+            # Update the frozen target models
+            self.copy_target(self.critic_target, self.critic, self.tau, False)
 
             c_losses.append(critic_loss.detach().cpu())
 
             actor_loss = None
             action, logprob, probs, dist = self.policy(states_mb)
-            current_Q1, current_Q2 = self.critic(states_mb, action)
-            q = torch.min(current_Q1, current_Q2)
-            p_loss = ((self.alpha * logprob) - q).mean()
+            with torch.no_grad():
+                q, _ = self.critic(states_mb, action)
+                action_d, logit_d = self.discriminator(states_mb, action)
+                log_action_d = F.logsigmoid(logit_d)
+                probs = action_d
+                real_actions_probs, real_actions_logit = self.discriminator(states_mb, actions_mb)
+                probs = torch.min(real_actions_probs, probs)
+                probs = probs / real_actions_probs
+                probs = probs.detach()
+
+            p_loss = -(probs * q + log_action_d).mean()
 
             self.policy_optimizer.zero_grad()
             p_loss.backward()
             self.policy_optimizer.step()
-
             p_losses.append(p_loss.detach().cpu())
 
-            if self.alpha_tuning:
-                alpha_loss = -(self.log_alpha * (logprob + self.target_entropy).detach()).mean()
+            # Optimize generator
+            real_label = torch.full((self.batch_size,), 1).to(device).float()
+            action_fake = self.generator(states_mb)
 
-                self.alpha_optim.zero_grad()
-                alpha_loss.backward()
-                self.alpha_optim.step()
+            _, logit = self.discriminator(states_mb, action_fake)
+            g_loss = F.binary_cross_entropy_with_logits(logit, real_label)
 
-                self.alpha = self.log_alpha.exp()
+            self.generator_optimizer.zero_grad()
+            g_loss.backward()
+            self.generator_optimizer.step()
+            g_losses.append(g_loss.detach().cpu())
 
-            # Update the frozen target models
-            self.copy_target(self.critic_target, self.critic, self.tau, False)
+            # Optimize discriminator
+            # We update the discriminator more time than the generator
+            for de in range(5):
+                # Take a mini-batch of batch_size experience
+                mini_batch_idxs = np.random.randint(0, len(self.states), size=self.batch_size)
 
-            p_losses.append(p_loss.detach().cpu())
+                states_mb = self.states[mini_batch_idxs]
+                actions_mb = self.actions[mini_batch_idxs]
 
-            # # Optimize generator
-            # real_label = torch.full((self.batch_size,), 1).to(device).float()
-            # action_fake = self.generator(states_mb)
-            #
-            # _, logit = self.discriminator(states_mb, action_fake)
-            # g_loss = F.binary_cross_entropy_with_logits(logit, real_label)
-            #
-            # self.generator_optimizer.zero_grad()
-            # g_loss.backward()
-            # self.generator_optimizer.step()
-            # g_losses.append(g_loss.detach().cpu())
-            #
-            # # Optimize discriminator
-            # # We update the discriminator more time than the generator
-            # for de in range(5):
-            #     # Take a mini-batch of batch_size experience
-            #     mini_batch_idxs = np.random.randint(0, len(self.states), size=self.batch_size)
-            #
-            #     states_mb = self.states[mini_batch_idxs]
-            #     actions_mb = self.actions[mini_batch_idxs]
-            #
-            #     # Loss on real action
-            #     _, d_real_logit = self.discriminator(states_mb, actions_mb + self.get_instance_noise(actions_mb.detach()))
-            #     # _, d_real_logit = self.discriminator(states_mb, actions_mb)
-            #     real_label = torch.full((self.batch_size,), 1).to(device).float()
-            #     err_d_real = F.mse_loss(F.sigmoid(d_real_logit), real_label) / 2.
-            #
-            #     def loss_fake_action(fake_action):
-            #         fake_label = torch.full((self.batch_size,), 0,).to(device).float()
-            #         _, d_fake_logit = self.discriminator(states_mb, fake_action.detach() + self.get_instance_noise(fake_action.detach()))
-            #         # _, d_fake_logit = self.discriminator(states_mb, fake_action.detach())
-            #         err_d_fake = F.mse_loss(F.sigmoid(d_fake_logit), fake_label) / 2.
-            #         return err_d_fake
-            #
-            #     fake_action_aux = self.generator(states_mb)
-            #     fake_action_pi, _, _, _ = self.policy(states_mb)
-            #     err_d_fake = loss_fake_action(fake_action_aux) + loss_fake_action(fake_action_pi)
-            #     self.discriminator_optimizer.zero_grad()
-            #     (err_d_real + err_d_fake).backward()
-            #     self.discriminator_optimizer.step()
-            #     d_losses.append((err_d_fake + err_d_real).detach().cpu())
+                # Loss on real action
+                _, d_real_logit = self.discriminator(states_mb, actions_mb +
+                                                     self.get_instance_noise(actions_mb.detach()))
+                # _, d_real_logit = self.discriminator(states_mb, actions_mb)
+                real_label = torch.full((self.batch_size,), 1).to(device).float()
+                err_d_real = F.mse_loss(F.sigmoid(d_real_logit), real_label) / 2.
+
+                def loss_fake_action(fake_action):
+                    fake_label = torch.full((self.batch_size,), 0, ).to(device).float()
+                    _, d_fake_logit = self.discriminator(states_mb, fake_action.detach() +
+                                                         self.get_instance_noise(fake_action.detach()))
+                    # _, d_fake_logit = self.discriminator(states_mb, fake_action.detach())
+                    err_d_fake = F.mse_loss(F.sigmoid(d_fake_logit), fake_label) / 2.
+                    return err_d_fake
+
+                fake_action_aux = self.generator(states_mb)
+                fake_action_pi, _, _, _ = self.policy(states_mb)
+                err_d_fake = loss_fake_action(fake_action_aux) + loss_fake_action(fake_action_pi)
+                self.discriminator_optimizer.zero_grad()
+                (err_d_real + err_d_fake).backward()
+                self.discriminator_optimizer.step()
+                d_losses.append((err_d_fake + err_d_real).detach().cpu())
 
         end = time.time()
-        #print("Time: {}".format(end - start))
+        print("Time: {}".format(end - start))
 
         #return p_losses, c_losses, d_losses, g_losses
         return np.mean(p_losses)
@@ -384,7 +377,7 @@ class DASCOAgent(nn.Module):
 
         # Compute the target Q value
         current_Q1, current_Q2 = self.critic_target(states_n, action)
-        target_Q = torch.min(current_Q1, current_Q2) - self.alpha * logprob
+        target_Q = torch.min(current_Q1, current_Q2)
         target_Q = target_Q.view(-1, 1)
 
         target = rews + (1.0 - dones.long()) * self.discount * target_Q
