@@ -249,15 +249,14 @@ class DASCOAgent(nn.Module):
 
             actor_loss = None
             action, logprob, probs, dist = self.policy(states_mb)
-            with torch.no_grad():
-                q, _ = self.critic(states_mb, action)
-                action_d, logit_d = self.discriminator(states_mb, action)
-                log_action_d = F.logsigmoid(logit_d)
-                probs = action_d
-                real_actions_probs, real_actions_logit = self.discriminator(states_mb, actions_mb)
-                probs = torch.min(real_actions_probs, probs)
-                probs = probs / real_actions_probs
-                probs = probs.detach()
+            q, _ = self.critic(states_mb, action)
+            action_d, logit_d = self.discriminator(states_mb, action)
+            log_action_d = F.logsigmoid(logit_d)
+            probs = action_d
+            real_actions_probs, real_actions_logit = self.discriminator(states_mb, actions_mb)
+            probs = torch.min(real_actions_probs, probs)
+            probs = probs / real_actions_probs
+            probs = probs.detach()
 
             p_loss = -(probs * q + log_action_d).mean()
 
