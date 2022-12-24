@@ -312,8 +312,8 @@ class DASCOAgent(nn.Module):
         end = time.time()
         print("Time: {}".format(end - start))
 
-        #return p_losses, c_losses, d_losses, g_losses
-        return np.mean(p_losses)
+        return p_losses, c_losses, d_losses, g_losses
+        # return np.mean(p_losses)
 
     # Clear the memory buffer
     def clear_buffer(self):
@@ -359,17 +359,6 @@ class DASCOAgent(nn.Module):
             terminals = 0
         self.buffer['terminals'].append(terminals)
 
-        # # If its terminal, update the episode length count (all states - sum(previous episode lengths)
-        # if self.frequency_mode == 'episodes':
-        #     if terminals == 1 or terminals == 2:
-        #         self.buffer['episode_lengths'].append(
-        #             int(len(self.buffer['states']) - np.sum(self.buffer['episode_lengths'])))
-        # else:
-        #     self.buffer['episode_lengths'] = []
-        #     for i, t in enumerate(self.buffer['terminals']):
-        #         if t == 1 or t == 2:
-        #             self.buffer['episode_lengths'].append(
-        #                 int(i + 1 - np.sum(self.buffer['episode_lengths'])))
     def compute_target(self, states_n, rews, dones):
 
         action, logprob, probs, dist = self.policy(states_n)
