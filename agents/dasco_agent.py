@@ -54,7 +54,7 @@ class Policy(nn.Module):
             log_prob -= torch.log(action_scale * (1 - y_t.pow(2)) + EPS)
             log_prob = log_prob.sum(1, keepdim=True)
             mean = torch.tanh(mean) * action_scale + action_bias
-            return action, log_prob, None, None
+            return action, log_prob, torch.concat([mean, log_std], dim=1), None
 
 class Critic(nn.Module):
     def __init__(self, state_dim, action_dim, **kwargs):
@@ -129,6 +129,7 @@ class Generator(nn.Module):
 class DASCOAgent(nn.Module):
     def __init__(self, state_dim, discount=0.99, lr=0.001, tau=0.005, w=1., alpha=0.2, policy_freq=2,
                  batch_size=32, num_itr=20, name='dasco', action_size=4, max_action_value=1, min_action_value=-1,
+                 memory=1e6, action_type="continuous", frequency_mode="timesteps",
                  **kwargs):
         super(DASCOAgent, self).__init__()
         # Policy information
@@ -149,6 +150,11 @@ class DASCOAgent(nn.Module):
         self.min_action_value = min_action_value
         self.model_name = name
         self.w = w
+        self.buffer = dict()
+        self.clear_buffer()
+        self.memory = memory
+        self.action_type = action_type
+        self.frequency_mode = frequency_mode
 
         # Define the entities that we need, policy and actor
         self.policy = Policy(self.state_dim, self.action_size, self.max_action, self.min_action_value).to(device)
@@ -181,6 +187,10 @@ class DASCOAgent(nn.Module):
         self.rewards = torch.reshape(self.rewards, (-1, 1))
         self.dones = torch.reshape(self.dones, (-1, 1))
 
+    def forward(self, state):
+        a, l, p, _ = self.policy(state)
+        return a, l, p, None
+
     # Assign to model_a the weights of model_b. Use it for update the target networks weights.
     def copy_target(self, target_model, main_model, tau=1e-2, init=False):
         if init:
@@ -207,16 +217,21 @@ class DASCOAgent(nn.Module):
         start = time.time()
         for _ in range(self.num_itr):
             self.total_itr += 1
-            # Take a mini-batch of batch_size experience
-            mini_batch_idxs = np.random.randint(0, len(self.states), size=self.batch_size)
 
-            states_mb = self.states[mini_batch_idxs]
-            next_states_mb = self.next_states[mini_batch_idxs]
-            actions_mb = self.actions[mini_batch_idxs]
-            rewards_mb = self.rewards[mini_batch_idxs]
+            mini_batch_idxs = np.random.choice(range(len(self.buffer['states'])), self.batch_size)
+            states_mb = [self.buffer['states'][id] for id in mini_batch_idxs]
+            states_mb = torch.from_numpy(np.asarray(states_mb)).to(device).float()
+            next_states_mb = [self.buffer['states_n'][id] for id in mini_batch_idxs]
+            next_states_mb = torch.from_numpy(np.asarray(next_states_mb)).to(device).float()
+            rewards_mb = [self.buffer['rewards'][id] for id in mini_batch_idxs]
+            rewards_mb = torch.from_numpy(np.asarray(rewards_mb)).to(device).float()
             rewards_mb = rewards_mb.view(-1, 1)
-            dones_mb = self.dones[mini_batch_idxs]
+            dones_mb = [self.buffer['terminals'][id] for id in mini_batch_idxs]
+            dones_mb = torch.from_numpy(np.asarray(dones_mb)).to(device).float()
             dones_mb = dones_mb.view(-1, 1)
+
+            actions_mb = [self.buffer['actions'][id] for id in mini_batch_idxs]
+            actions_mb = torch.from_numpy(np.asarray(actions_mb)).to(device).float()
 
             with torch.no_grad():
                 target_Q = self.compute_target(next_states_mb, rewards_mb, dones_mb)
@@ -303,10 +318,66 @@ class DASCOAgent(nn.Module):
             #     d_losses.append((err_d_fake + err_d_real).detach().cpu())
 
         end = time.time()
-        print("Time: {}".format(end - start))
+        #print("Time: {}".format(end - start))
 
-        return p_losses, c_losses, d_losses, g_losses
+        #return p_losses, c_losses, d_losses, g_losses
+        return np.mean(p_losses)
 
+    # Clear the memory buffer
+    def clear_buffer(self):
+
+        self.buffer['episode_lengths'] = []
+        self.buffer['states'] = []
+        self.buffer['actions'] = []
+        self.buffer['old_probs'] = []
+        self.buffer['states_n'] = []
+        self.buffer['rewards'] = []
+        self.buffer['terminals'] = []
+
+    # Add a transition to the buffer
+    def add_to_buffer(self, state, state_n, action, reward, old_prob, terminals):
+        # If we store more than memory episodes, remove the last episode
+        if self.frequency_mode == 'episodes':
+            if len(self.buffer['episode_lengths']) + 1 >= self.memory + 1:
+                idxs_to_remove = self.buffer['episode_lengths'][0]
+                del self.buffer['states'][:idxs_to_remove]
+                del self.buffer['actions'][:idxs_to_remove]
+                del self.buffer['old_probs'][:idxs_to_remove]
+                del self.buffer['states_n'][:idxs_to_remove]
+                del self.buffer['rewards'][:idxs_to_remove]
+                del self.buffer['terminals'][:idxs_to_remove]
+                del self.buffer['episode_lengths'][0]
+
+        # If we store more than memory timesteps, remove the last timestep
+        elif self.frequency_mode == 'timesteps':
+            if (len(self.buffer['states']) + 1 > self.memory):
+                del self.buffer['states'][0]
+                del self.buffer['actions'][0]
+                del self.buffer['old_probs'][0]
+                del self.buffer['states_n'][0]
+                del self.buffer['rewards'][0]
+                del self.buffer['terminals'][0]
+
+        self.buffer['states'].append(state)
+        self.buffer['actions'].append(action)
+        self.buffer['old_probs'].append(old_prob)
+        self.buffer['states_n'].append(state_n)
+        self.buffer['rewards'].append(reward)
+        if terminals == 2:
+            terminals = 0
+        self.buffer['terminals'].append(terminals)
+
+        # # If its terminal, update the episode length count (all states - sum(previous episode lengths)
+        # if self.frequency_mode == 'episodes':
+        #     if terminals == 1 or terminals == 2:
+        #         self.buffer['episode_lengths'].append(
+        #             int(len(self.buffer['states']) - np.sum(self.buffer['episode_lengths'])))
+        # else:
+        #     self.buffer['episode_lengths'] = []
+        #     for i, t in enumerate(self.buffer['terminals']):
+        #         if t == 1 or t == 2:
+        #             self.buffer['episode_lengths'].append(
+        #                 int(i + 1 - np.sum(self.buffer['episode_lengths'])))
     def compute_target(self, states_n, rews, dones):
 
         action, logprob, probs, dist = self.policy(states_n)
@@ -321,7 +392,7 @@ class DASCOAgent(nn.Module):
 
         return target
 
-    def save_model(self, folder='saved', with_barracuda=False):
+    def save_model(self, name='name', folder='saved', with_barracuda=False):
         torch.save(self.critic.state_dict(), '{}/{}_critic'.format(folder, self.model_name))
         torch.save(self.critic_optimizer.state_dict(), '{}/{}_critic_optimizer'.format(folder, self.model_name))
 
