@@ -11,7 +11,7 @@ from utils import *
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def load_demonstrations_d4rl(env, normalize=True):
+def load_demonstrations_d4rl(env, normalize=False):
     dataset = d4rl.qlearning_dataset(env.env)
 
     states_mean = None
@@ -47,7 +47,7 @@ def eval(model, max_test_ep_len, env, state_mean=None, state_std=None):
     episode_rewards = []
     model.eval()
     model.policy.eval()
-    for episode in range(10):
+    for episode in range(20):
 
         # init episode
         running_state = env.reset()['global_in']
@@ -87,7 +87,7 @@ def eval(model, max_test_ep_len, env, state_mean=None, state_std=None):
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-mn', '--model-name', help="The name of the model", default='dasco')
-parser.add_argument('-gn', '--game-name', help="The name of the game", default="walker2d-expert-v2")
+parser.add_argument('-gn', '--game-name', help="The name of the game", default="hopper-medium-replay-v2")
 parser.add_argument('-rn', '--run-name', help="The name of the run to save statistics", default="run")
 parser.add_argument('-al', '--algorithm', help="The algorithm to use", default="dasco")
 parser.add_argument('-mt', '--max-timesteps', help="Max timestep per episode", default=1000, type=int)
@@ -127,7 +127,7 @@ if __name__ == "__main__":
         model = TD3BCAgent(state_dim=state_dim, lr=3e-4, action_size=action_size, num_itr=5000, batch_size=256,
                        name=args.model_name)
     elif args.algorithm == 'dasco':
-        model = DASCOAgent(state_dim=state_dim, lr=1e-4, action_size=action_size, num_itr=5000, batch_size=256,
+        model = DASCOAgent(state_dim=state_dim, lr=3e-4, action_size=action_size, num_itr=5000, batch_size=256,
                            name=args.model_name)
     elif args.algorithm == 'cql':
         model = CQLAgent(critic_embedding=CriticEmbedding, policy_embedding=PolicyEmbedding, state_dim=state_dim, lr=1e-4,

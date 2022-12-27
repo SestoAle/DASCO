@@ -27,6 +27,8 @@ class Policy(nn.Module):
         # Layers specification
         self.embedding_l1 = nn.Linear(state_dim, 256)
         self.embedding_l2 = nn.Linear(256, 256)
+        self.embedding_l3 = nn.Linear(256, 256)
+        self.embedding_l4 = nn.Linear(256, 256)
 
         self.mean = nn.Linear(256, self.action_size)
         self.log_std = nn.Linear(256, self.action_size)
@@ -35,6 +37,8 @@ class Policy(nn.Module):
         state = torch.reshape(inputs, (-1, self.state_dim))
         x = F.relu(self.embedding_l1(state))
         x = F.relu(self.embedding_l2(x))
+        x = F.relu(self.embedding_l3(x))
+        x = F.relu(self.embedding_l4(x))
         mean = self.mean(x)
         log_std = self.log_std(x)
         action_scale = (self.max_action_value - self.min_action_value) / 2.
@@ -63,20 +67,24 @@ class Critic(nn.Module):
         # Layers specification
         self.embedding_q1_l1 = nn.Linear(state_dim + action_dim, 256)
         self.embedding_q1_l2 = nn.Linear(256, 256)
+        self.embedding_q1_l3 = nn.Linear(256, 256)
         self.q1_l = nn.Linear(256, 1)
 
         self.embedding_q2_l1 = nn.Linear(state_dim + action_dim, 256)
         self.embedding_q2_l2 = nn.Linear(256, 256)
+        self.embedding_q2_l3 = nn.Linear(256, 256)
         self.q2_l = nn.Linear(256, 1)
 
     def forward(self, state, action):
         x = torch.cat([state, action], dim=1)
         q1 = F.relu(self.embedding_q1_l1(x))
         q1 = F.relu(self.embedding_q1_l2(q1))
+        q1 = F.relu(self.embedding_q1_l3(q1))
         q1 = self.q1_l(q1)
 
         q2 = F.relu(self.embedding_q2_l1(x))
         q2 = F.relu(self.embedding_q2_l2(q2))
+        q2 = F.relu(self.embedding_q2_l3(q2))
         q2 = self.q2_l(q2)
         return q1, q2
 
@@ -84,6 +92,7 @@ class Critic(nn.Module):
         x = torch.cat([state, action], dim=1)
         q1 = F.relu(self.embedding_q1_l1(x))
         q1 = F.relu(self.embedding_q1_l2(q1))
+        q1 = F.relu(self.embedding_q1_l3(q1))
         q1 = self.q1_l(q1)
         return q1
 
@@ -125,9 +134,8 @@ class Generator(nn.Module):
         action = F.tanh(self.gen_l(gen)) * self.max_action_value
         return action
 
-
 class DASCOAgent(nn.Module):
-    def __init__(self, state_dim, discount=0.99, lr=0.001, tau=0.005, w=1., alpha=0.2, policy_freq=2,
+    def __init__(self, state_dim, discount=0.99, lr=0.001, tau=0.005, w=1., alpha=0.2, policy_freq=2, anneal_instance_noise=50,
                  batch_size=32, num_itr=20, name='dasco', action_size=4, max_action_value=1, min_action_value=-1,
                  memory=1e6, action_type="continuous", frequency_mode="timesteps",
                  **kwargs):
@@ -175,6 +183,12 @@ class DASCOAgent(nn.Module):
         self.critic_target = Critic(self.state_dim, self.action_size).to(device)
         self.copy_target(self.critic_target, self.critic, self.tau, True)
 
+        self.noise_mag = 1
+        # If we want, we can anneal the noise as the original paper
+        self.anneal_instance_noise = anneal_instance_noise
+        if self.anneal_instance_noise > 0:
+            self.ann_noise = self.noise_mag / anneal_instance_noise
+
         self.total_itr = 0
 
     def set_dataset(self, dataset):
@@ -203,7 +217,7 @@ class DASCOAgent(nn.Module):
     def get_instance_noise(self, actions, std=0.3):
         noise = torch.normal(mean=0, std=torch.ones_like(actions) * std).to(device)
         n = torch.norm(noise, dim=1)
-        f = torch.min(n, torch.full(n.shape, 0.3).to(device)) / n
+        f = torch.min(n, torch.full(n.shape,  self.noise_mag * 0.3).to(device)) / n
         noise = noise * f.view(-1, 1)
 
         return noise
@@ -247,16 +261,16 @@ class DASCOAgent(nn.Module):
 
             c_losses.append(critic_loss.detach().cpu())
 
-            actor_loss = None
-            action, logprob, probs, dist = self.policy(states_mb)
+            action, _, _, _ = self.policy(states_mb)
             q, _ = self.critic(states_mb, action)
             action_d, logit_d = self.discriminator(states_mb, action)
             log_action_d = F.logsigmoid(logit_d)
-            probs = action_d
             real_actions_probs, real_actions_logit = self.discriminator(states_mb, actions_mb)
+            probs = action_d
             probs = torch.min(real_actions_probs, probs)
             probs = probs / real_actions_probs
             probs = probs.detach()
+            log_action_d = log_action_d.view((-1, 1))
 
             p_loss = -(probs * q + log_action_d).mean()
 
@@ -308,6 +322,9 @@ class DASCOAgent(nn.Module):
                 (err_d_real + err_d_fake).backward()
                 self.discriminator_optimizer.step()
                 d_losses.append((err_d_fake + err_d_real).detach().cpu())
+
+        if self.anneal_instance_noise > 0:
+            self.noise_mag -= self.ann_noise
 
         end = time.time()
         print("Time: {}".format(end - start))
