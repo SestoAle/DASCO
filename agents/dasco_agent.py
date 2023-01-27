@@ -282,9 +282,12 @@ class DASCOAgent(nn.Module):
             # Optimize generator
             real_label = torch.full((self.batch_size,), 1).to(device).float()
             action_fake = self.generator(states_mb)
+            action_pi, _, _, _ = self.policy(states_mb)
 
             _, logit = self.discriminator(states_mb, action_fake)
+            _, logit_pi = self.discriminator(states_mb, action_pi)
             g_loss = F.binary_cross_entropy_with_logits(logit, real_label)
+            g_loss += F.binary_cross_entropy_with_logits(logit_pi, real_label)
 
             self.generator_optimizer.zero_grad()
             g_loss.backward()
